@@ -3,19 +3,21 @@ from typing import Dict, Any
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from pyMLS.Proposals import AddProposal
-from pyMLS.RatchetTree import RatchetTree
-from pyMLS.KeySchedule import KeySchedule
-from pyMLS.TranscriptHashManager import TranscriptHashManager
+from .Proposals import AddProposal
+from .RatchetTree import RatchetTree, Node
+from .KeySchedule import KeySchedule
+from .KeyPackage import KeyPackage
+from .TranscriptHashManager import TranscriptHashManager
 import json
 
 DEBUG = False
+
 class WelcomeMessage:
     """
     Handles Welcome messages for new members in the MLS protocol.
     """
 
-    def __init__(self, groupContext: bytes, ratchetTree, keySchedule):
+    def __init__(self, groupContext: bytes, ratchetTree, keySchedule, groupVersion: int, groupCipherSuite: int, keyPackage: KeyPackage):
         """
         Initialize the WelcomeMessage handler.
         :param groupContext: Current group context (e.g., group ID, epoch, root hash).
@@ -25,26 +27,27 @@ class WelcomeMessage:
         self.groupContext = groupContext
         self.ratchetTree = ratchetTree
         self.keySchedule = keySchedule
+        self.groupVersion = groupVersion
+        self.groupCipherSuite = groupCipherSuite
+        self.keyPackage = keyPackage
+        
 
-    def createWelcome(self, newMemberPublicKey: bytes) -> Dict[str, Any]:
+    def createWelcome(self, keyPackage: KeyPackage) -> Dict[str, Any]:
         """
-        Creates a Welcome message for a new member.
-        :param newMemberPublicKey: Public key of the new member (from their KeyPackage).
+        Creates a Welcome message for a new member using their KeyPackage.
+        :param keyPackage: KeyPackage object for the new member.
         :return: A dictionary representing the Welcome message.
         """
-        # Validate the new member's public key
-        if not isinstance(newMemberPublicKey, bytes) or len(newMemberPublicKey) != 32:
-            raise ValueError("Invalid public key provided for new member.")
+        if not isinstance(keyPackage, KeyPackage):
+            raise ValueError("createWelcome requires a valid KeyPackage.")
+
+        # Use the group_version and group_cipher_suite from the WelcomeMessage instance
+        keyPackage.validate(self.groupVersion, self.groupCipherSuite)
 
         # Serialize the full ratchet tree
         publicRatchetTree = self.ratchetTree.getPublicState()
         if DEBUG:
-            print(f"Serialized full tree structure: {publicRatchetTree}")
-            print(f"Serialized full tree size: {len(publicRatchetTree)} (Expected: {len(self.ratchetTree.tree)})")
-
-        # Verify the serialized tree matches the expected size
-        if len(publicRatchetTree) != len(self.ratchetTree.tree):
-            raise ValueError("Serialized tree does not include all nodes in the binary tree.")
+            print(f"Generated publicRatchetTree: {publicRatchetTree}")
 
         # Derive a joiner_secret (simulated as random here for testing purposes)
         joinerSecret = os.urandom(32)
@@ -91,20 +94,24 @@ class WelcomeMessage:
             "encryptedGroupSecrets": encryptedGroupSecrets.hex(),
             "encryptedEpochSecret": (nonce + encryptedEpochSecret).hex(),
             "publicRatchetTree": publicRatchetTree,
+            "keyPackage": keyPackage.serialize().decode("utf-8"),
         }
         return welcomeMessage
 
 
-    def processWelcome(self, welcomeMessage: Dict[str, bytes], privateKey: bytes) -> None:
+    def processWelcome(self, welcomeMessage: Dict[str, Any], privateKey: bytes):
         """
         Processes a Welcome message to initialize the new member's state.
-        :param welcomeMessage: The received Welcome message.
+        :param welcomeMessage: The received Welcome message as a dictionary.
         :param privateKey: Private key of the new member for decrypting the group secrets.
         """
-        # Decrypt the joiner_secret from encrypted_group_secrets using private key
-        encryptedGroupSecrets = welcomeMessage["encryptedGroupSecrets"]
+        # Deserialize fields from the WelcomeMessage
+        encryptedGroupSecrets = bytes.fromhex(welcomeMessage["encryptedGroupSecrets"])
+        encryptedEpochSecret = bytes.fromhex(welcomeMessage["encryptedEpochSecret"])
+        groupContext = bytes.fromhex(welcomeMessage["groupContext"])
+        publicRatchetTree = welcomeMessage["publicRatchetTree"]
 
-        # Placeholder: Assume joiner_secret is simply the encryptedGroupSecrets for testing
+        # Placeholder: Simulate joinerSecret derivation for testing
         joinerSecret = encryptedGroupSecrets
 
         # Derive the symmetric decryption key and nonce from the joiner_secret
@@ -122,28 +129,22 @@ class WelcomeMessage:
             info=b"welcome_nonce"
         ).derive(joinerSecret)
 
-        # Extract the encrypted epoch secret
-        encryptedData = welcomeMessage["encryptedEpochSecret"]
-        extractedNonce = encryptedData[:12]
-        ciphertext = encryptedData[12:]
+        # Extract the actual nonce and ciphertext from the encrypted epoch secret
+        extractedNonce = encryptedEpochSecret[:12]
+        ciphertext = encryptedEpochSecret[12:]
 
         if extractedNonce != nonce:
             raise ValueError("Nonce mismatch between encryption and decryption.")
 
         # Decrypt the epoch secret
         aesGcm = AESGCM(encryptionKey)
-        epochSecret = aesGcm.decrypt(nonce, ciphertext, welcomeMessage["groupContext"])
+        epochSecret = aesGcm.decrypt(nonce, ciphertext, groupContext)
 
-        # Update KeySchedule with the decrypted epoch secret
+        # Update the key schedule with the decrypted epoch secret
         self.keySchedule.currentEpochSecret = epochSecret
 
-        # Sync the ratchet tree
-        self.ratchetTree.syncTree(welcomeMessage["publicRatchetTree"])
-
-        # Deserialize and process the AddProposal
-        addProposalData = json.loads(welcomeMessage["addProposal"].decode())
-        addProposal = AddProposal(publicKey=bytes.fromhex(addProposalData["publicKey"]))
-        self.ratchetTree.addMember(addProposal.publicKey)
+        # Sync the ratchet tree with the provided public state
+        self.ratchetTree.syncTree(publicRatchetTree)
 
     def serialize(self) -> bytes:
         """
@@ -161,15 +162,21 @@ class WelcomeMessage:
                 return obj
 
         try:
-            welcomeMessage = self.createWelcome(os.urandom(32))  # Generate a sample for serialization
             if DEBUG:
-                print(f"Serialized publicRatchetTree size: {len(welcomeMessage['publicRatchetTree'])}")            
+                print("Serializing WelcomeMessage...")
+            # Ensure that a valid KeyPackage is available
+            if not isinstance(self.keyPackage, KeyPackage):
+                raise ValueError("serialize requires a valid KeyPackage.")
+            
+            # Generate the WelcomeMessage using a properly initialized KeyPackage
+            welcomeMessage = self.createWelcome(self.keyPackage)
+            if DEBUG:
+                print(f"Serialized publicRatchetTree: {welcomeMessage['publicRatchetTree']}")
             serializedMessage = convert_bytes(welcomeMessage)
             return json.dumps(serializedMessage, ensure_ascii=False).encode("utf-8")
         except Exception as e:
             print(f"Error serializing WelcomeMessage: {e}")
             raise
-
 
 
     @staticmethod
@@ -193,28 +200,37 @@ class WelcomeMessage:
         try:
             parsed = json.loads(data.decode("utf-8"))
             parsed = convert_hex(parsed)
-            if DEBUG:
-                print(f"Deserialized publicRatchetTree size: {len(parsed['publicRatchetTree'])}")
 
             groupContext = parsed["groupContext"]
-            publicRatchetTree = parsed["publicRatchetTree"]
             encryptedGroupSecrets = parsed["encryptedGroupSecrets"]
             encryptedEpochSecret = parsed["encryptedEpochSecret"]
 
             # Correctly calculate numLeaves based on publicRatchetTree size
-            totalNodes = len(publicRatchetTree)
+            publicRatchetTreeData = parsed["publicRatchetTree"]
+            totalNodes = len(publicRatchetTreeData)
             numLeaves = (totalNodes + 1) // 2  # For a complete binary tree, leaves = (nodes + 1) / 2
 
             # Initialize a valid hashManager
             hashManager = TranscriptHashManager()
 
+            # Create a new RatchetTree and reconstruct it from publicRatchetTreeData
             ratchetTree = RatchetTree(numLeaves=numLeaves, initialSecret=b"", hashManager=hashManager)
-            ratchetTree.syncTree(publicRatchetTree)
+            ratchetTree.tree = [
+                Node(publicKey=node["publicKey"]) if isinstance(node["publicKey"], bytes)
+                else Node(publicKey=bytes.fromhex(node["publicKey"])) for node in publicRatchetTreeData
+            ]
 
             keySchedule = KeySchedule(initialSecret=b"")
             keySchedule.currentEpochSecret = encryptedGroupSecrets
 
-            return WelcomeMessage(groupContext, ratchetTree, keySchedule)
+            return WelcomeMessage(
+                groupContext=groupContext,
+                ratchetTree=ratchetTree,
+                keySchedule=keySchedule,
+                groupVersion=parsed.get("groupVersion"),
+                groupCipherSuite=parsed.get("groupCipherSuite"),
+                keyPackage=None  # Placeholder: Adjust if keyPackage needs to be reconstructed
+            )
         except Exception as e:
             print(f"Error deserializing WelcomeMessage: {e}")
             raise

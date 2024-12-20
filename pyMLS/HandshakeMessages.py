@@ -1,88 +1,98 @@
-from typing import Optional, List
+from typing import Optional, List, Type, Union
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives import serialization
 from enum import Enum
+from .KeyPackage import KeyPackage
+from .HandshakeTypes import HandshakeType
+from .Proposals import AddProposal, UpdateProposal, RemoveProposal
+from .Commit import Commit
 import json
-
-
-class HandshakeType(Enum):
-    """
-    Enumeration for handshake message types.
-    """
-    ADD = "add"
-    UPDATE = "update"
-    REMOVE = "remove"
-    COMMIT = "commit"
-
 
 class HandshakeMessage:
     """
     Base class for all MLS handshake messages.
     """
     def __init__(self, messageType: HandshakeType, senderId: bytes):
+        """
+        Initialize a HandshakeMessage.
+
+        :param messageType: The type of the handshake message.
+        :param senderId: The identifier of the sender.
+        """
         self.messageType = messageType
         self.senderId = senderId
 
     def serialize(self) -> bytes:
         """
         Serialize the handshake message. Must be implemented by subclasses.
+
+        :return: The serialized handshake message as bytes.
         """
-        raise NotImplementedError("Subclasses must implement serialize method.")
+        raise NotImplementedError("Subclasses must implement the serialize method.")
 
     @staticmethod
-    def deserialize(data: bytes) -> "HandshakeMessage":
+    def deserialize(data: bytes) -> Union["AddProposal", "UpdateProposal", "RemoveProposal", "Commit"]:
         """
         Deserialize a handshake message from JSON format and return the appropriate subclass.
+
+        :param data: The serialized handshake message as bytes.
+        :return: An instance of the appropriate handshake message subclass.
+        :raises ValueError: If the message type is not supported or the data is invalid.
         """
         try:
-            message = json.loads(data)
+            # Decode the JSON data
+            message = json.loads(data.decode("utf-8"))
+
+            # Determine the type of handshake message
             proposalType = message.get("proposalType")
             if proposalType == HandshakeType.ADD.value:
-                return Add.deserialize(data)
+                return AddProposal.deserialize(data)
             elif proposalType == HandshakeType.UPDATE.value:
-                return Update.deserialize(data)
+                return UpdateProposal.deserialize(data)
             elif proposalType == HandshakeType.REMOVE.value:
-                return Remove.deserialize(data)
+                return RemoveProposal.deserialize(data)
             elif proposalType == HandshakeType.COMMIT.value:
                 return Commit.deserialize(data)
             else:
                 raise ValueError(f"Unsupported handshake message type: {proposalType}")
         except json.JSONDecodeError as e:
             raise ValueError("Invalid JSON data") from e
-
-
+        
 class Add(HandshakeMessage):
     """
     Represents an Add handshake message.
     """
-    def __init__(self, senderId: bytes, publicKey: bytes):
+    def __init__(self, senderId: bytes, keyPackage: KeyPackage):
         super().__init__(HandshakeType.ADD, senderId)
-        self.publicKey = publicKey
+        self.keyPackage = keyPackage
 
     def serialize(self) -> bytes:
         """
-        Serialize the Add message into JSON format.
+        Serialize the Add handshake message.
         """
         data = {
             "proposalType": self.messageType.value,
             "senderId": self.senderId.hex(),
-            "publicKey": self.publicKey.hex(),
+            "keyPackage": self.keyPackage.serialize().hex(),
         }
         return json.dumps(data).encode("utf-8")
 
     @staticmethod
     def deserialize(data: bytes) -> "Add":
         """
-        Deserialize an Add message from JSON format.
+        Deserialize an Add handshake message from JSON format.
         """
-        message = json.loads(data)
-        if message["proposalType"] != HandshakeType.ADD.value:
-            raise ValueError("Invalid Add message")
-        return Add(
-            senderId=bytes.fromhex(message["senderId"]),
-            publicKey=bytes.fromhex(message["publicKey"]),
-        )
-
+        try:
+            message = json.loads(data)
+            if message.get("proposalType") != HandshakeType.ADD.value:
+                raise ValueError("Invalid proposal type for Add message.")
+            senderId = bytes.fromhex(message["senderId"])
+            keyPackage = KeyPackage.deserialize(bytes.fromhex(message["keyPackage"]))
+            return Add(senderId=senderId, keyPackage=keyPackage)
+        except KeyError as e:
+            raise ValueError(f"Missing required field in Add message: {e}")
+        except json.JSONDecodeError as e:
+            raise ValueError("Invalid JSON data for Add message") from e
 
 class Update(HandshakeMessage):
     """

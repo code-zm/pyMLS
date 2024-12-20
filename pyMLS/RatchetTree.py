@@ -3,10 +3,11 @@ from dataclasses import dataclass
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.hashes import Hash, SHA256
 from cryptography.hazmat.primitives import serialization
-from pyMLS.KeySchedule import KeySchedule
-from pyMLS.TranscriptHashManager import TranscriptHashManager  # New centralized manager
+from .KeySchedule import KeySchedule
+from .TranscriptHashManager import TranscriptHashManager  # New centralized manager
+from .KeyPackage import KeyPackage
 
-DEBUG = False
+DEBUG = True
 @dataclass
 class Node:
     """Represents a node in the ratchet tree."""
@@ -68,6 +69,9 @@ class RatchetTree:
             rightChild = self.tree[nodeIndex]
             parent = self.tree[parentIndex]
 
+            if not isinstance(leftChild, Node) or not isinstance(rightChild, Node):
+                raise TypeError("Tree nodes must be Node objects")
+
             if leftChild.publicKey and rightChild.publicKey:
                 hasher = Hash(SHA256())
                 hasher.update(leftChild.publicKey)
@@ -111,14 +115,25 @@ class RatchetTree:
                 publicState.append(None)  # Include placeholders for missing nodes
         return publicState
 
-    def addMember(self, publicKey: Optional[bytes] = None):
+    def addMember(self, keyPackage: KeyPackage):
         """
-        Adds a new member to the ratchet tree.
-        :param publicKey: Public key of the new member. If None, generates a new key.
+        Adds a new member to the ratchet tree using a KeyPackage.
+        :param keyPackage: KeyPackage object of the new member.
         """
+        # Validate the KeyPackage
+        if not isinstance(keyPackage, KeyPackage):
+            raise ValueError("addMember requires a valid KeyPackage.")
+
+        keyPackage.validate(self.groupContext)  # Validate KeyPackage against the GroupContext
+
+        # Extract the public key from the KeyPackage
+        publicKey = keyPackage.init_key
+
+        # Check if the public key already exists in the tree
         if publicKey in [node.publicKey for node in self.tree if node.publicKey]:
             raise ValueError("The public key already exists in the tree.")
 
+        # Determine the new leaf index and update tree size
         newLeafIndex = self.numLeaves
         self.numLeaves += 1
         self.numNodes = 2 * self.numLeaves - 1
@@ -129,14 +144,8 @@ class RatchetTree:
 
         # Add the new member as a leaf node
         newLeafNodeIndex = self.getNodeIndex(newLeafIndex)
-        if publicKey is None:
-            privateKey = X25519PrivateKey.generate()
-            publicKey = privateKey.public_key().public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
-            )
-            self.tree[newLeafNodeIndex].privateKey = privateKey
         self.tree[newLeafNodeIndex].publicKey = publicKey
+        self.tree[newLeafNodeIndex].privateKey = None  # Publicly added members do not have private keys set here
 
         # Ensure parent hashes are consistent
         self.computeParentHashes()
@@ -153,7 +162,6 @@ class RatchetTree:
         self.tree[nodeIndex].privateKey = None
         self.computeParentHashes()
         self.updateTranscriptHash()
-
 
     def updateMemberKey(self, memberIndex: int, newPublicKey: bytes):
         """

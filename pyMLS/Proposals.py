@@ -1,7 +1,9 @@
 from typing import Dict, Any, List
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 import json
-from pyMLS.TranscriptHashManager import TranscriptHashManager
+from .TranscriptHashManager import TranscriptHashManager
+from .KeyPackage import KeyPackage
+from .HandshakeTypes import HandshakeType
 
 DEBUG = False
 
@@ -44,35 +46,78 @@ class Proposal:
 
             proposalType = proposalData["proposalType"]
             if proposalType == "AddProposal":
-                return AddProposal(publicKey=bytes.fromhex(proposalData["publicKey"]))
-            elif proposalType == "RemoveProposal":
-                return RemoveProposal(memberIndex=proposalData["memberIndex"])
+                return AddProposal.from_dict(proposalData)
             elif proposalType == "UpdateProposal":
-                return UpdateProposal(
-                    memberIndex=proposalData["memberIndex"],
-                    newPublicKey=bytes.fromhex(proposalData["newPublicKey"]),
-                )
+                return UpdateProposal.from_dict(proposalData)
+            elif proposalType == "RemoveProposal":
+                return RemoveProposal.from_dict(proposalData)
             else:
                 raise ValueError(f"Unknown Proposal Type: {proposalType}")
         except Exception as e:
             print(f"Error during Proposal deserialization: {e}")
             raise
 
-
-class AddProposal(Proposal):
+class AddProposal:
     """
-    Represents an AddProposal in the MLS protocol.
+    Represents an AddProposal in the MLS protocol, containing a KeyPackage.
     """
-    def __init__(self, publicKey: bytes):
-        self.proposalType = "AddProposal"
-        self.publicKey = publicKey
 
+    @property
+    def publicKey(self) -> bytes:
+        """
+        Return the public key (init key) from the associated KeyPackage
+        """
+        return self.keyPackage.init_key
+
+        
+    def __init__(self, keyPackage: KeyPackage):
+        """
+        Initialize an AddProposal with a given KeyPackage.
+
+        :param keyPackage: The KeyPackage associated with the AddProposal.
+        """
+        self.keyPackage = keyPackage
+
+    def serialize(self) -> bytes:
+        """
+        Serialize the AddProposal, including the proposalType.
+
+        :return: The serialized AddProposal as bytes.
+        """
+        data = {
+            "proposalType": HandshakeType.ADD.value,  # Ensure proposalType is included
+            "keyPackage": self.keyPackage.serialize().hex(),  # Serialize KeyPackage
+        }
+        return json.dumps(data).encode("utf-8")
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
             "proposalType": "AddProposal",
-            "publicKey": self.publicKey.hex()
+            "keyPackage": self.keyPackage.serialize().hex(),
         }
 
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "AddProposal":
+        """
+        Construct an AddProposal from a dictionary.
+
+        :param data: A dictionary containing the AddProposal data.
+        :return: An instance of AddProposal.
+        """
+        keyPackage = KeyPackage.deserialize(bytes.fromhex(data["keyPackage"]))
+        return AddProposal(keyPackage)
+
+    @staticmethod
+    def deserialize(data: bytes) -> "AddProposal":
+        """
+        Deserialize an AddProposal from bytes.
+
+        :param data: The serialized AddProposal as bytes.
+        :return: An instance of AddProposal.
+        """
+        parsed = json.loads(data.decode("utf-8"))
+        keyPackage = KeyPackage.deserialize(bytes.fromhex(parsed["keyPackage"]))
+        return AddProposal(keyPackage)
 
 class RemoveProposal(Proposal):
     """
@@ -87,7 +132,12 @@ class RemoveProposal(Proposal):
             "proposalType": "RemoveProposal",
             "memberIndex": self.memberIndex
         }
-
+    
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "RemoveProposal":
+        return RemoveProposal(
+            memberIndex=data["memberIndex"]
+        )
 
 class UpdateProposal(Proposal):
     """
@@ -104,7 +154,13 @@ class UpdateProposal(Proposal):
             "memberIndex": self.memberIndex,
             "newPublicKey": self.newPublicKey.hex()
         }
-
+    
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "UpdateProposal":
+        return UpdateProposal(
+            memberIndex=data["memberIndex"],
+            newPublicKey=bytes.fromhex(data["newPublicKey"]),
+        )
 
 class ProposalSigner:
     """
@@ -137,7 +193,6 @@ class ProposalSigner:
             if DEBUG:
                 print(f"Error during proposal verification: {e}")
             return False
-
 
 class ProposalList:
     """
