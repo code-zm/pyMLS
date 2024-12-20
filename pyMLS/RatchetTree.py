@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.hashes import Hash, SHA256
 from cryptography.hazmat.primitives import serialization
-from KeySchedule import KeySchedule
-from TranscriptHashManager import TranscriptHashManager  # New centralized manager
+from pyMLS.KeySchedule import KeySchedule
+from pyMLS.TranscriptHashManager import TranscriptHashManager  # New centralized manager
 
 DEBUG = False
 @dataclass

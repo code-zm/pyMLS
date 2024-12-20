@@ -1,7 +1,7 @@
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.hashes import SHA256
 from typing import Optional
-from TranscriptHashManager import TranscriptHashManager  # Centralized manager
+from pyMLS.TranscriptHashManager import TranscriptHashManager  # Centralized manager
 
 
 class KeySchedule:

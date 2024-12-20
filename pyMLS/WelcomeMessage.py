@@ -3,10 +3,10 @@ from typing import Dict, Any
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from Proposals import AddProposal
-from RatchetTree import RatchetTree
-from KeySchedule import KeySchedule
-from TranscriptHashManager import TranscriptHashManager
+from pyMLS.Proposals import AddProposal
+from pyMLS.RatchetTree import RatchetTree
+from pyMLS.KeySchedule import KeySchedule
+from pyMLS.TranscriptHashManager import TranscriptHashManager
 import json
 
 DEBUG = False

@@ -3,8 +3,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from cryptography.hazmat.primitives.hashes import Hash, SHA256
 from cryptography.hazmat.primitives import serialization
 from jsonschema import validate, ValidationError
-from Proposals import Proposal, AddProposal, RemoveProposal, UpdateProposal
-from TranscriptHashManager import TranscriptHashManager  # Centralized manager
+from pyMLS.Proposals import Proposal, AddProposal, RemoveProposal, UpdateProposal
+from pyMLS.TranscriptHashManager import TranscriptHashManager  # Centralized manager
 import json
 
 DEBUG = False

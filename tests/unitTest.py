@@ -2,15 +2,17 @@ import unittest
 import os
 from unittest.mock import Mock
 from jsonschema import validate, ValidationError
-from ..KeySchedule import KeySchedule
-from ..RatchetTree import RatchetTree
-from ..MessageFraming import MessageFraming
-from ..WelcomeMessage import WelcomeMessage
-from ..Proposals import AddProposal, RemoveProposal, UpdateProposal, ProposalSigner
-from ..Commit import Commit
-from ..HandshakeMessages import HandshakeMessage, HandshakeType, Add, Update, Remove
+from pyMLS.KeySchedule import KeySchedule
+from pyMLS.RatchetTree import RatchetTree
+from pyMLS.MessageFraming import MessageFraming
+from pyMLS.WelcomeMessage import WelcomeMessage
+from pyMLS.Proposals import AddProposal, RemoveProposal, UpdateProposal, ProposalSigner
+from pyMLS.Commit import Commit
+from pyMLS.HandshakeMessages import HandshakeMessage, HandshakeType, Add, Update, Remove
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives import serialization
+from pyMLS.TranscriptHashManager import TranscriptHashManager
+
 import json
 
 DEBUG = False
@@ -28,10 +30,13 @@ class TestMLSComponents(unittest.TestCase):
         self.commitSecret = os.urandom(32)
         self.groupContext = b"group_context_example"
 
+        # Initialize TranscriptHashManager
+        self.hashManager = TranscriptHashManager()
+
         # Initialize components
-        self.ratchetTree = RatchetTree(numLeaves=4, initialSecret=self.initialSecret)
+        self.ratchetTree = RatchetTree(numLeaves=4, initialSecret=self.initialSecret, hashManager=self.hashManager)
         self.keySchedule = self.ratchetTree.keySchedule
-        self.keySchedule.nextEpoch(self.commitSecret, self.groupContext)
+        self.keySchedule.nextEpoch(self.commitSecret, self.groupContext, self.hashManager)
 
         epochSecrets = self.keySchedule.getEpochSecrets()
         self.messageFraming = MessageFraming(
@@ -55,7 +60,7 @@ class TestMLSComponents(unittest.TestCase):
     def test_large_tree(self):
         """Test creating and managing a large RatchetTree."""
         numLeaves = 1000  # Set the number of leaves
-        largeTree = RatchetTree(numLeaves=numLeaves, initialSecret=os.urandom(32))
+        largeTree = RatchetTree(numLeaves=numLeaves, initialSecret=os.urandom(32), hashManager=self.hashManager)
 
         # Verify the total number of nodes in the tree (2 * numLeaves - 1)
         self.assertEqual(len(largeTree.getPublicState()), 2 * numLeaves - 1)
@@ -72,7 +77,7 @@ class TestMLSComponents(unittest.TestCase):
 
     def test_invalid_operations_on_tree(self):
         """Test invalid operations like removing non-existent members."""
-        with self.assertRaises(IndexError):
+        with self.assertRaises(ValueError):
             self.ratchetTree.removeMember(10)  # Invalid index
 
     def test_public_state_consistency(self):
@@ -85,7 +90,7 @@ class TestMLSComponents(unittest.TestCase):
     def test_invalid_commit_secret(self):
         """Test handling of invalid commit secrets."""
         with self.assertRaises(ValueError):
-            self.keySchedule.nextEpoch(None, self.groupContext)
+            self.keySchedule.nextEpoch(None, self.groupContext, self.hashManager)
 
     def test_serialization_deserialization_key_schedule(self):
         """Test serializing and deserializing key schedule states."""
@@ -117,10 +122,11 @@ class TestMLSComponents(unittest.TestCase):
         """Test signing and verifying a batch of proposals."""
         proposals = [AddProposal(publicKey=os.urandom(32)) for _ in range(10)]
         for proposal in proposals:
-            signature = ProposalSigner.signProposal(proposal, self.privateKey)
+            signature = ProposalSigner.signProposal(proposal, self.privateKey, self.hashManager)
             self.assertTrue(
-                ProposalSigner.verifyProposal(proposal, signature, self.publicKey)
+                ProposalSigner.verifyProposal(proposal, signature, self.publicKey, self.hashManager)
             )
+
 
     # ---- Commit ----
     def test_partial_application_commit(self):
@@ -181,8 +187,10 @@ class TestMLSComponents(unittest.TestCase):
             groupContext=self.groupContext
         )
         commit.sign(self.privateKey)
-        commit.apply(self.ratchetTree, self.keySchedule)
+        commit.apply(self.ratchetTree, self.keySchedule, self.hashManager)  # Pass hashManager here
         self.assertEqual(self.keySchedule.epoch, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
+

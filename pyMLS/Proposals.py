@@ -1,7 +1,7 @@
 from typing import Dict, Any, List
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 import json
-from TranscriptHashManager import TranscriptHashManager
+from pyMLS.TranscriptHashManager import TranscriptHashManager
 
 DEBUG = False
 
