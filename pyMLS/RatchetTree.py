@@ -1,3 +1,4 @@
+import os
 from typing import List, Optional
 from dataclasses import dataclass
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
