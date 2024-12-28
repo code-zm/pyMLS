@@ -39,12 +39,24 @@ class MockRatchetTree:
             self.updateMemberKey(proposal.memberIndex, proposal.newPublicKey)
         else:
             raise ValueError(f"Unknown proposal type: {type(proposal).__name__}")
-    
-    def updateMemberKey(self, memberIndex, newPublicKey):
-        if memberIndex in self.members:
-            self.members[memberIndex] = newPublicKey
-        else:
-            raise ValueError(f"Member index {memberIndex} does not exist.")
+
+    def validateProposal(self, proposal):
+        """
+        Simulates validation of a proposal in the ratchet tree.
+        """
+        if isinstance(proposal, AddProposal):
+            # Ensure no duplicate keys
+            if proposal.keyPackage.initKey in self.members.values():
+                return False
+        elif isinstance(proposal, RemoveProposal):
+            # Ensure member exists
+            if proposal.memberIndex not in self.members:
+                return False
+        elif isinstance(proposal, UpdateProposal):
+            # Ensure member exists
+            if proposal.memberIndex not in self.members:
+                return False
+        return True
 
 class TestCommit(unittest.TestCase):
     def setUp(self):

@@ -9,7 +9,6 @@ import json
 
 DEBUG = False
 
-
 class Commit:
     """
     Represents a Commit message in the MLS protocol.
@@ -27,6 +26,11 @@ class Commit:
     }
 
     def __init__(self, proposals: List[Proposal], commitSecret: bytes, groupContext: bytes):
+        if len(commitSecret) != 32:  # Assuming SHA-256
+            raise ValueError("Invalid commitSecret length. Expected 32 bytes.")
+        if len(groupContext) == 0:
+            raise ValueError("Invalid groupContext length. Must be non-empty.")
+        
         self.proposals = proposals
         self.commitSecret = commitSecret
         self.groupContext = groupContext
@@ -84,8 +88,9 @@ class Commit:
         Applies the Commit message to update the group state and computes the new transcript hash.
         """
         try:
-            # Apply proposals to the ratchet tree
             for proposal in self.proposals:
+                if not ratchetTree.validateProposal(proposal):
+                    raise ValueError(f"Invalid proposal: {proposal}")
                 ratchetTree.applyProposal(proposal)
 
             # Update the group state
