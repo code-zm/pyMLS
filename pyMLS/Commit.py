@@ -3,7 +3,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from cryptography.hazmat.primitives.hashes import Hash, SHA256
 from cryptography.hazmat.primitives import serialization
 from jsonschema import validate, ValidationError
-from .Proposals import Proposal, AddProposal, RemoveProposal, UpdateProposal
+from .Proposals import Proposal
 from .TranscriptHashManager import TranscriptHashManager
 import json
 
@@ -50,24 +50,26 @@ class Commit:
             print(f"Serialized Commit: {serialized}")
         return serialized.encode("utf-8")
 
-    def sign(self, privateKey: Ed25519PrivateKey):
+    def sign(self, privateKey: Ed25519PrivateKey, hashManager: TranscriptHashManager):
         """
-        Signs the serialized Commit message.
+        Signs the serialized Commit message and updates the transcript hash.
         """
         serialized_commit = self.serialize(include_signature=False)
+        hashManager.updateHash(serialized_commit)  # Update the transcript hash
         self.signature = privateKey.sign(serialized_commit)
         if DEBUG:
             print(f"Commit Signature: {self.signature.hex()}")
 
-    def verify(self, publicKey: bytes) -> bool:
+    def verify(self, publicKey: bytes, hashManager: TranscriptHashManager) -> bool:
         """
-        Verifies the Commit message signature.
+        Verifies the Commit message signature and updates the transcript hash.
         """
         if not self.signature:
             raise ValueError("Commit is not signed.")
 
         verifier_key = Ed25519PublicKey.from_public_bytes(publicKey)
         serialized_commit = self.serialize(include_signature=False)
+        hashManager.updateHash(serialized_commit)  # Update the transcript hash
 
         try:
             verifier_key.verify(self.signature, serialized_commit)
@@ -81,46 +83,48 @@ class Commit:
         """
         Applies the Commit message to update the group state and computes the new transcript hash.
         """
-        # Apply each proposal to the RatchetTree
-        for proposal in self.proposals:
-            if isinstance(proposal, AddProposal):
-                ratchetTree.addMember(proposal.keyPackage.initKey)
-            elif isinstance(proposal, RemoveProposal):
-                ratchetTree.removeMember(proposal.memberIndex)
-            elif isinstance(proposal, UpdateProposal):
-                ratchetTree.updateMemberKey(proposal.memberIndex, proposal.newPublicKey)
+        try:
+            # Apply proposals to the ratchet tree
+            for proposal in self.proposals:
+                ratchetTree.applyProposal(proposal)
 
-        # Generate new epoch secrets using the commitSecret and updated group context
-        keySchedule.updateForCommit(self.commitSecret, self.groupContext, hashManager)
+            # Update the group state
+            keySchedule.nextEpoch(
+                commitSecret=self.commitSecret,
+                context=self.groupContext,
+                hashManager=hashManager,
+            )
 
-        # Update the transcript hash using the serialized Commit
-        serialized_commit = self.serialize(include_signature=False)
-        hashManager.updateHash(serialized_commit)
+            # Update the transcript hash with the new group context
+            hashManager.updateHash(self.groupContext)
+            if DEBUG:
+                print(f"Commit applied successfully. New groupContext: {self.groupContext.hex()}")
+
+        except Exception as e:
+            if DEBUG:
+                print(f"Error applying Commit: {e}")
+            raise
 
     @staticmethod
-    def deserialize(data: bytes) -> Optional["Commit"]:
+    def deserialize(data: bytes) -> "Commit":
         """
-        Deserializes a Commit message from JSON format and verifies its structure.
+        Deserializes a Commit message from JSON.
         """
         try:
             commit_data = json.loads(data.decode("utf-8"))
-            if DEBUG:
-                print(f"Deserializing Commit: {commit_data}")
             validate(instance=commit_data, schema=Commit._commit_schema)
 
-            # Deserialize proposals
-            proposals = [
-                Proposal.deserialize(json.dumps(proposal).encode("utf-8"))
-                for proposal in commit_data["proposals"]
-            ]
+            proposals = [Proposal.deserialize(json.dumps(p).encode('utf-8')) for p in commit_data["proposals"]]
             commit_secret = bytes.fromhex(commit_data["commitSecret"])
             group_context = bytes.fromhex(commit_data["groupContext"])
-            signature = bytes.fromhex(commit_data.get("signature", ""))
 
             commit = Commit(proposals, commit_secret, group_context)
-            commit.signature = signature
+            if "signature" in commit_data:
+                commit.signature = bytes.fromhex(commit_data["signature"])
+
             return commit
-        except (json.JSONDecodeError, ValidationError, ValueError) as e:
+
+        except (json.JSONDecodeError, ValidationError) as e:
             if DEBUG:
-                print(f"Error during deserialization: {e}")
-            return None
+                print(f"Error deserializing Commit: {e}")
+            raise
