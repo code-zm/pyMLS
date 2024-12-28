@@ -3,7 +3,7 @@ from cryptography.hazmat.primitives.hashes import SHA256
 from pyMLS.KeySchedule import KeySchedule
 from unittest.mock import Mock
 
-DEBUG = False
+
 class TestKeySchedule(unittest.TestCase):
     def setUp(self):
         # Setup initial conditions for tests
@@ -35,13 +35,16 @@ class TestKeySchedule(unittest.TestCase):
         self.assertEqual(self.key_schedule.currentEpochSecret, derived_secret)
 
     def test_export_secret(self):
-        # Test exporting a secret with a label and context
         label = "export_test"
         context = b"export_context"
-        self.key_schedule.currentEpochSecret = b"current_secret"
+
+        # Initialize secrets for the epoch
+        self.key_schedule.nextEpoch(self.commit_secret, self.context, self.hash_manager, numLeaves=4)
+
         exported_secret = self.key_schedule.exportSecret(label, context)
-        expected_secret = self.key_schedule.deriveSecret(b"current_secret", f"exporter_{label}", context)
+        expected_secret = self.key_schedule.deriveSecret(self.key_schedule.exporterSecret, f"exporter_{label}", context)
         self.assertEqual(exported_secret, expected_secret)
+
 
     def test_derive_epoch_authenticator(self):
         # Test deriving an epoch authenticator
@@ -52,7 +55,7 @@ class TestKeySchedule(unittest.TestCase):
 
     def test_next_epoch(self):
         # Call nextEpoch with PSK
-        self.key_schedule.nextEpoch(self.commit_secret, self.context, self.hash_manager, self.psk)
+        self.key_schedule.nextEpoch(self.commit_secret, self.context, self.hash_manager, self.psk, numLeaves=4)
 
         # Compute expected values step-by-step
         combined_context = self.commit_secret + self.context + self.transcript_hash
@@ -64,18 +67,15 @@ class TestKeySchedule(unittest.TestCase):
                 expected_epoch_secret, "psk_secret", self.psk
             )
 
-        # Debugging outputs
-        if DEBUG:
-            print("Combined Context:", combined_context)
-            print("Expected Epoch Secret:", expected_epoch_secret)
-            print("Computed Epoch Secret:", self.key_schedule.currentEpochSecret)
-
         # Validate the epoch secret
         self.assertEqual(self.key_schedule.currentEpochSecret, expected_epoch_secret)
 
+        # Check SecretTree initialization
+        self.assertIsNotNone(self.key_schedule.secretTree)
+
     def test_get_epoch_secrets(self):
         # Test retrieving epoch secrets
-        self.key_schedule.nextEpoch(self.commit_secret, self.context, self.hash_manager, self.psk)
+        self.key_schedule.nextEpoch(self.commit_secret, self.context, self.hash_manager, self.psk, numLeaves=4)
         secrets = self.key_schedule.getEpochSecrets()
         self.assertIn("epochSecret", secrets)
         self.assertIn("encryptionSecret", secrets)
@@ -90,6 +90,26 @@ class TestKeySchedule(unittest.TestCase):
         self.key_schedule.updateForCommit(self.commit_secret, self.context, self.hash_manager, self.psk)
         self.assertEqual(self.key_schedule.epoch, 1)
 
+    def test_get_leaf_secrets(self):
+        # Test retrieving per-leaf secrets
+        numLeaves = 4
+        self.key_schedule.nextEpoch(self.commit_secret, self.context, self.hash_manager, numLeaves=numLeaves)
+
+        # Test handshake and application keys for the first leaf
+        leaf_index = 0
+        secrets = self.key_schedule.getLeafSecrets(leaf_index, self.key_schedule.epoch)
+
+        self.assertIn("handshakeKey", secrets)
+        self.assertIn("handshakeNonce", secrets)
+        self.assertIn("applicationKey", secrets)
+        self.assertIn("applicationNonce", secrets)
+
+        # Ensure keys and nonces are non-empty
+        self.assertTrue(secrets["handshakeKey"])
+        self.assertTrue(secrets["handshakeNonce"])
+        self.assertTrue(secrets["applicationKey"])
+        self.assertTrue(secrets["applicationNonce"])
+
+
 if __name__ == "__main__":
     unittest.main()
-
