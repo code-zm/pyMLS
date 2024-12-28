@@ -61,15 +61,6 @@ class AddProposal:
     """
     Represents an AddProposal in the MLS protocol, containing a KeyPackage.
     """
-
-    @property
-    def publicKey(self) -> bytes:
-        """
-        Return the public key (init key) from the associated KeyPackage
-        """
-        return self.keyPackage.init_key
-
-        
     def __init__(self, keyPackage: KeyPackage):
         """
         Initialize an AddProposal with a given KeyPackage.
@@ -81,12 +72,10 @@ class AddProposal:
     def serialize(self) -> bytes:
         """
         Serialize the AddProposal, including the proposalType.
-
-        :return: The serialized AddProposal as bytes.
         """
         data = {
-            "proposalType": HandshakeType.ADD.value,  # Ensure proposalType is included
-            "keyPackage": self.keyPackage.serialize().hex(),  # Serialize KeyPackage
+            "proposalType": HandshakeType.ADD.value,
+            "keyPackage": self.keyPackage.serialize().hex(),
         }
         return json.dumps(data).encode("utf-8")
     
@@ -100,9 +89,6 @@ class AddProposal:
     def from_dict(data: Dict[str, Any]) -> "AddProposal":
         """
         Construct an AddProposal from a dictionary.
-
-        :param data: A dictionary containing the AddProposal data.
-        :return: An instance of AddProposal.
         """
         keyPackage = KeyPackage.deserialize(bytes.fromhex(data["keyPackage"]))
         return AddProposal(keyPackage)
@@ -111,9 +97,6 @@ class AddProposal:
     def deserialize(data: bytes) -> "AddProposal":
         """
         Deserialize an AddProposal from bytes.
-
-        :param data: The serialized AddProposal as bytes.
-        :return: An instance of AddProposal.
         """
         parsed = json.loads(data.decode("utf-8"))
         keyPackage = KeyPackage.deserialize(bytes.fromhex(parsed["keyPackage"]))
