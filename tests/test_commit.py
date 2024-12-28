@@ -27,6 +27,25 @@ class MockRatchetTree:
         else:
             raise ValueError(f"Member index {memberIndex} does not exist.")
 
+    def applyProposal(self, proposal):
+        """
+        Apply a proposal to the ratchet tree.
+        """
+        if isinstance(proposal, AddProposal):
+            self.addMember(proposal.keyPackage.initKey)
+        elif isinstance(proposal, RemoveProposal):
+            self.removeMember(proposal.memberIndex)
+        elif isinstance(proposal, UpdateProposal):
+            self.updateMemberKey(proposal.memberIndex, proposal.newPublicKey)
+        else:
+            raise ValueError(f"Unknown proposal type: {type(proposal).__name__}")
+    
+    def updateMemberKey(self, memberIndex, newPublicKey):
+        if memberIndex in self.members:
+            self.members[memberIndex] = newPublicKey
+        else:
+            raise ValueError(f"Member index {memberIndex} does not exist.")
+
 class TestCommit(unittest.TestCase):
     def setUp(self):
         self.privateKey = Ed25519PrivateKey.generate()
@@ -41,7 +60,7 @@ class TestCommit(unittest.TestCase):
 
         self.mockKeyPackage = KeyPackage(
             version=1,
-            cipherSuite=0x0001,  # Updated to lower camel case
+            cipherSuite=0x0001,
             initKey=self.publicKeyBytes,
             leafNode={
                 "capabilities": {"versions": [1], "cipherSuites": [0x0001]},
@@ -54,7 +73,7 @@ class TestCommit(unittest.TestCase):
         )
 
         self.proposals = [
-            AddProposal(keyPackage=self.mockKeyPackage),  # Use snake case as required by AddProposal
+            AddProposal(keyPackage=self.mockKeyPackage),
             UpdateProposal(memberIndex=1, newPublicKey=os.urandom(32)),
             RemoveProposal(memberIndex=2),
         ]
@@ -88,18 +107,18 @@ class TestCommit(unittest.TestCase):
             self.assertEqual(deserialized.groupContext, self.commit.groupContext)
 
     def testCommitSigning(self):
-        self.commit.sign(self.privateKey)
+        self.commit.sign(self.privateKey, self.transcriptHashManager)
         self.assertIsNotNone(self.commit.signature)
 
     def testCommitSignatureVerification(self):
-        self.commit.sign(self.privateKey)
-        is_valid = self.commit.verify(self.publicKeyBytes)
+        self.commit.sign(self.privateKey, self.transcriptHashManager)
+        is_valid = self.commit.verify(self.publicKeyBytes, self.transcriptHashManager)
         self.assertTrue(is_valid)
 
     def testCommitSignatureVerificationFailure(self):
-        self.commit.sign(self.privateKey)
+        self.commit.sign(self.privateKey, self.transcriptHashManager)
         self.commit.groupContext = os.urandom(32)  # Tamper the Commit
-        is_valid = self.commit.verify(self.publicKeyBytes)
+        is_valid = self.commit.verify(self.publicKeyBytes, self.transcriptHashManager)
         self.assertFalse(is_valid)
 
     def testCommitApplication(self):
