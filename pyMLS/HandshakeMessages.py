@@ -1,227 +1,142 @@
-from typing import Optional, List, Type, Union
+import struct
+from typing import List
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-from cryptography.hazmat.primitives import serialization
-from enum import Enum
 from .KeyPackage import KeyPackage
 from .HandshakeTypes import HandshakeType
-from .Proposals import AddProposal, UpdateProposal, RemoveProposal
-from .Commit import Commit
-import json
+
+DEBUG = True
+
+class SerializationUtils:
+    @staticmethod
+    def packLengthPrefixed(data: bytes) -> bytes:
+        return struct.pack(f"!H{len(data)}s", len(data), data)
+
+    @staticmethod
+    def unpackLengthPrefixed(data: bytes, offset: int):
+        length = struct.unpack("!H", data[offset:offset + 2])[0]
+        start = offset + 2
+        value = data[start:start + length]
+        return value, start + length
 
 class HandshakeMessage:
-    """
-    Base class for all MLS handshake messages.
-    """
-    def __init__(self, messageType: HandshakeType, senderId: bytes):
-        """
-        Initialize a HandshakeMessage.
-
-        :param messageType: The type of the handshake message.
-        :param senderId: The identifier of the sender.
-        """
+    def __init__(self, messageType: HandshakeType, payload: bytes):
         self.messageType = messageType
-        self.senderId = senderId
+        self.payload = payload
 
-    def serialize(self) -> bytes:
-        """
-        Serialize the handshake message. Must be implemented by subclasses.
-
-        :return: The serialized handshake message as bytes.
-        """
-        raise NotImplementedError("Subclasses must implement the serialize method.")
+    def serializeBinary(self) -> bytes:
+        payloadLength = len(self.payload)
+        return struct.pack(f"!B{payloadLength}s", self.messageType.value, self.payload)
 
     @staticmethod
-    def deserialize(data: bytes) -> Union["AddProposal", "UpdateProposal", "RemoveProposal", "Commit"]:
-        """
-        Deserialize a handshake message from JSON format and return the appropriate subclass.
+    def deserializeBinary(data: bytes) -> "HandshakeMessage":
+        messageType = HandshakeType(struct.unpack("!B", data[:1])[0])
+        payload = data[1:]
+        return HandshakeMessage(messageType, payload)
 
-        :param data: The serialized handshake message as bytes.
-        :return: An instance of the appropriate handshake message subclass.
-        :raises ValueError: If the message type is not supported or the data is invalid.
-        """
-        try:
-            # Decode the JSON data
-            message = json.loads(data.decode("utf-8"))
-
-            # Determine the type of handshake message
-            proposalType = message.get("proposalType")
-            if proposalType == HandshakeType.ADD.value:
-                return AddProposal.deserialize(data)
-            elif proposalType == HandshakeType.UPDATE.value:
-                return UpdateProposal.deserialize(data)
-            elif proposalType == HandshakeType.REMOVE.value:
-                return RemoveProposal.deserialize(data)
-            elif proposalType == HandshakeType.COMMIT.value:
-                return Commit.deserialize(data)
-            else:
-                raise ValueError(f"Unsupported handshake message type: {proposalType}")
-        except json.JSONDecodeError as e:
-            raise ValueError("Invalid JSON data") from e
-        
-class Add(HandshakeMessage):
-    """
-    Represents an Add handshake message.
-    """
-    def __init__(self, senderId: bytes, keyPackage: KeyPackage):
-        super().__init__(HandshakeType.ADD, senderId)
+class Add:
+    def __init__(self, keyPackage: KeyPackage):
         self.keyPackage = keyPackage
 
-    def serialize(self) -> bytes:
-        """
-        Serialize the Add handshake message.
-        """
-        data = {
-            "proposalType": self.messageType.value,
-            "senderId": self.senderId.hex(),
-            "keyPackage": self.keyPackage.serialize().hex(),
-        }
-        return json.dumps(data).encode("utf-8")
+    def serializeBinary(self) -> bytes:
+        serialized = self.keyPackage.serialize()
+        if DEBUG:
+            print(f"Serializing Add: keyPackage={self.keyPackage}")
+            print(f"[SERIALIZEDDATA]{serialized}")
+        return serialized
 
     @staticmethod
-    def deserialize(data: bytes) -> "Add":
-        """
-        Deserialize an Add handshake message from JSON format.
-        """
-        try:
-            message = json.loads(data)
-            if message.get("proposalType") != HandshakeType.ADD.value:
-                raise ValueError("Invalid proposal type for Add message.")
-            senderId = bytes.fromhex(message["senderId"])
-            keyPackage = KeyPackage.deserialize(bytes.fromhex(message["keyPackage"]))
-            return Add(senderId=senderId, keyPackage=keyPackage)
-        except KeyError as e:
-            raise ValueError(f"Missing required field in Add message: {e}")
-        except json.JSONDecodeError as e:
-            raise ValueError("Invalid JSON data for Add message") from e
+    def deserializeBinary(data: bytes) -> "Add":
+        keyPackage = KeyPackage.deserialize(data)
+        if DEBUG:
+            print(f"Deserializing Add: keyPackage={keyPackage}")
+        return Add(keyPackage)
 
-class Update(HandshakeMessage):
-    """
-    Represents an Update handshake message.
-    """
-    def __init__(self, senderId: bytes, newPublicKey: bytes):
-        super().__init__(HandshakeType.UPDATE, senderId)
-        self.newPublicKey = newPublicKey
+class Update:
+    def __init__(self, keyPackage: KeyPackage):
+        self.keyPackage = keyPackage
 
-    def serialize(self) -> bytes:
-        """
-        Serialize the Update message into JSON format.
-        """
-        data = {
-            "proposalType": self.messageType.value,
-            "senderId": self.senderId.hex(),
-            "publicKey": self.newPublicKey.hex(),
-        }
-        return json.dumps(data).encode("utf-8")
+    def serializeBinary(self) -> bytes:
+        serialized = self.keyPackage.serialize()
+        if DEBUG:
+            print(f"Serializing Update: keyPackage={self.keyPackage}")
+            print(f"[SERIALIZEDDATA]{serialized}")
+        return serialized
 
     @staticmethod
-    def deserialize(data: bytes) -> "Update":
-        """
-        Deserialize an Update message from JSON format.
-        """
-        message = json.loads(data)
-        if message["proposalType"] != HandshakeType.UPDATE.value:
-            raise ValueError("Invalid Update message")
-        return Update(
-            senderId=bytes.fromhex(message["senderId"]),
-            newPublicKey=bytes.fromhex(message["publicKey"]),
-        )
+    def deserializeBinary(data: bytes) -> "Update":
+        keyPackage = KeyPackage.deserialize(data)
+        if DEBUG:
+            print(f"Deserializing Update: keyPackage={keyPackage}")
+        return Update(keyPackage)
 
+class Remove:
+    def __init__(self, removedIndex: int):
+        self.removedIndex = removedIndex
 
-class Remove(HandshakeMessage):
-    """
-    Represents a Remove handshake message.
-    """
-    def __init__(self, senderId: bytes, memberIndex: int):
-        super().__init__(HandshakeType.REMOVE, senderId)
-        self.memberIndex = memberIndex
-
-    def serialize(self) -> bytes:
-        """
-        Serialize the Remove message into JSON format.
-        """
-        data = {
-            "proposalType": self.messageType.value,
-            "senderId": self.senderId.hex(),
-            "memberIndex": self.memberIndex,
-        }
-        return json.dumps(data).encode("utf-8")
+    def serializeBinary(self) -> bytes:
+        serialized = struct.pack("!I", self.removedIndex)
+        if DEBUG:
+            print(f"Serializing Remove: removedIndex={self.removedIndex}")
+            print(f"[SERIALIZEDDATA]{serialized}")
+        return serialized
 
     @staticmethod
-    def deserialize(data: bytes) -> "Remove":
-        """
-        Deserialize a Remove message from JSON format.
-        """
-        message = json.loads(data)
-        if message["proposalType"] != HandshakeType.REMOVE.value:
-            raise ValueError("Invalid Remove message")
-        return Remove(
-            senderId=bytes.fromhex(message["senderId"]),
-            memberIndex=message["memberIndex"],
-        )
+    def deserializeBinary(data: bytes) -> "Remove":
+        removedIndex = struct.unpack("!I", data[:4])[0]
+        if DEBUG:
+            print(f"Deserializing Remove: removedIndex={removedIndex}")
+        return Remove(removedIndex)
 
-
-class Commit(HandshakeMessage):
-    """
-    Represents a Commit handshake message.
-    """
-    def __init__(self, senderId: bytes, proposals: List[HandshakeMessage], commitSecret: bytes, groupContext: bytes):
-        super().__init__(HandshakeType.COMMIT, senderId)
-        self.proposals = proposals
+class Commit:
+    def __init__(self, proposals: List[HandshakeMessage], commitSecret: bytes, signature: bytes = None):
+        self.proposals = proposals  # Keep as HandshakeMessage objects
         self.commitSecret = commitSecret
-        self.groupContext = groupContext
-        self.signature = None
+        self.signature = signature  # Optional
 
-    def serialize(self) -> bytes:
-        """
-        Serialize the Commit message into JSON format.
-        """
-        serialized_proposals = [proposal.serialize().decode("utf-8") for proposal in self.proposals]
-        data = {
-            "proposalType": self.messageType.value,
-            "senderId": self.senderId.hex(),
-            "proposals": serialized_proposals,
-            "commitSecret": self.commitSecret.hex(),
-            "groupContext": self.groupContext.hex(),
-            "signature": self.signature.hex() if self.signature else None,
-        }
-        return json.dumps(data).encode("utf-8")
+    def serializeBinary(self) -> bytes:
+        serializedProposals = b"".join([SerializationUtils.packLengthPrefixed(p.serializeBinary()) for p in self.proposals])
+        proposalsLength = len(serializedProposals)
+        serializedData = struct.pack(f"!H{proposalsLength}s32s", proposalsLength, serializedProposals, self.commitSecret)
+        if DEBUG:
+            print(f"Serializing Commit: proposals={self.proposals}, commitSecret={self.commitSecret}")
+            print(f"[SERIALIZEDDATA]{serializedData}")
+        return serializedData
 
     @staticmethod
-    def deserialize(data: bytes) -> "Commit":
-        """
-        Deserialize a Commit message from JSON format.
-        """
-        message = json.loads(data)
-        if message["proposalType"] != HandshakeType.COMMIT.value:
-            raise ValueError("Invalid Commit message")
-        proposals = [
-            HandshakeMessage.deserialize(json.dumps(p).encode("utf-8"))
-            for p in message["proposals"]
-        ]
-        return Commit(
-            senderId=bytes.fromhex(message["senderId"]),
-            proposals=proposals,
-            commitSecret=bytes.fromhex(message["commitSecret"]),
-            groupContext=bytes.fromhex(message["groupContext"]),
-        )
+    def deserializeBinary(data: bytes) -> "Commit":
+        proposalsLength = struct.unpack("!H", data[:2])[0]
+        proposalsData = data[2:2 + proposalsLength]
+        commitSecret = data[2 + proposalsLength:2 + proposalsLength + 32]
+
+        proposals = []
+        offset = 0
+        while offset < proposalsLength:
+            proposal, next_offset = SerializationUtils.unpackLengthPrefixed(proposalsData, offset)
+            proposals.append(Add.deserializeBinary(proposal))  # Adjust for other message types if needed
+            offset = next_offset
+
+        if DEBUG:
+            print(f"Deserializing Commit: proposals={proposals}, commitSecret={commitSecret}")
+        return Commit(proposals, commitSecret)
 
     def sign(self, privateKey: Ed25519PrivateKey):
-        """
-        Sign the Commit message using the given private key.
-        """
-        serializedCommit = self.serialize()
+        """Signs the serialized Commit data using the provided Ed25519 private key."""
+        serializedCommit = self.serializeBinary()
         self.signature = privateKey.sign(serializedCommit)
+        if DEBUG:
+            print(f"Commit signed successfully. Signature: {self.signature}")
 
-    def verify(self, publicKey: bytes) -> bool:
-        """
-        Verify the signature of the Commit message using the given public key.
-        """
-        if self.signature is None:
-            raise ValueError("Commit message is not signed.")
-        verifierKey = Ed25519PublicKey.from_public_bytes(publicKey)
-        serializedCommit = self.serialize()
+    def verify(self, publicKey: Ed25519PublicKey) -> bool:
+        """Verifies the Commit signature using the provided Ed25519 public key."""
+        if not self.signature:
+            raise ValueError("No signature available to verify.")
+        serializedCommit = self.serializeBinary()
         try:
-            verifierKey.verify(self.signature, serializedCommit)
+            publicKey.verify(self.signature, serializedCommit)
+            if DEBUG:
+                print("Commit signature verified successfully.")
             return True
-        except Exception:
+        except Exception as e:
+            if DEBUG:
+                print(f"Commit signature verification failed: {e}")
             return False
