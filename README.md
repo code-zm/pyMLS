@@ -1,150 +1,60 @@
-# Messaging Layer Security (MLS) Library
+# pyMLS - Message Layer Security (MLS) Implementation
 
-This library is a work-in-progress implementation of the Messaging Layer Security (MLS) protocol, designed in accordance with RFC 9420. It provides the foundations for a secure group messaging framework, including key management, message protection, and transcript hash integrity.
-
-**⚠️ Disclaimer**: This library is **not ready for production use**. It is currently under development and has not undergone sufficient testing or validation for security-critical environments.
+**pyMLS** is a Python implementation of the Message Layer Security (MLS) protocol, designed for secure and efficient group messaging. This project aims to adhere to the RFC 9420 standard.
 
 ---
 
-## Features
+## Current Functionality
 
-- **Group Management**: Create and manage groups with secure membership changes.
-- **Message Protection**: Encrypt, sign, and authenticate group messages.
-- **Cryptographic Primitives**: Secure cryptographic operations for key derivation and encryption.
-- **Transcript Hash Integrity**: Ensure that all group operations maintain a consistent cryptographic transcript hash.
-- **Extensibility**: Modular design for additional MLS features and custom integrations.
-
-## Components
-
-The library is modular, with each component implementing specific MLS functionalities:
-
-### 1. **Commit**
-
-Handles Commit messages, which are used to propose and confirm group state changes.
-
-- **Features**:
-    - Serialize and deserialize Commit messages.
-    - Sign and verify Commit messages.
-    - Apply group state changes (e.g., member addition/removal).
+- **HandshakeMessages**: Add, Update, Remove, Commit message handling with RFC-compliant structures.
+- **KeyPackage**: Construction, signing, serialization, and validation.
+- **KeySchedule**: Epoch secret derivation with support for PSK injection.
+- **MessageFraming**: Encoding/decoding for Public and Private messages with AES-GCM encryption.
+- **Proposals**: AddProposal, UpdateProposal, RemoveProposal with validation.
+- **RatchetTree**: Efficient group state management through tree-based cryptography.
+- **SecretTree**: Secure key and nonce derivation for handshake and application messages.
+- **TranscriptHashManager**: Ensures transcript consistency across group state transitions.
+- **WelcomeMessage**: Secure group creation and member onboarding.
 
 ---
 
-### 2. **HandshakeMessages**
+## TODO
 
-Implements the MLS handshake messages, including Add, Update, Remove, and Commit types.
+#### KeyPackage
+1. Add detailed validation for fields (e.g., HPKE key checks, signature expiration).
+2. Incorporate support for pre-shared keys (PSKs) for external initialization.
 
-- **Features**:
-    - Serialize and deserialize handshake messages.
-    - Validate and verify handshake operations.
-    - Manage group member updates.
+#### KeySchedule
+1. Complete integration with the `SecretTree` for encryption key derivation.
+2. Validate derived secrets against expected outputs for compliance with RFC Section 9.1.
 
----
+#### MessageFraming
+1. Add robust nonce management to prevent AES-GCM nonce reuse.
+2. Implement padding mechanisms to obscure message length (Section 15.1).
 
-### 3. **KeySchedule**
+#### Proposals
+1. Validate proposal inputs (e.g., KeyPackages in AddProposal) against group capabilities.
+2. Implement proposal list validation checks (RFC Section 12.2).
 
-Manages the cryptographic key schedule for secure group communications.
+#### RatchetTree
+1. Add functions for validating parent and tree hash calculations (Sections 7.8 and 7.9).
+2. Implement synchronization mechanisms for distributed tree views (Section 7.5).
 
-- **Features**:
-    - Derive epoch secrets and keys.
-    - Transition keys after Commit operations.
-    - Validate key schedule updates.
+#### SecretTree
+1. Enforce deletion schedules for leaf nodes (Section 9.2).
+2. Enhance support for epoch transitions and synchronization.
 
----
+#### TranscriptHashManager
+1. Add base hash integrity checks for stronger validation.
 
-### 4. **MessageFraming**
-
-Handles the framing and encryption of MLS messages.
-
-- **Features**:
-    - Encrypt and decrypt group messages.
-    - Authenticate and validate message integrity.
-    - Detect and handle tampered ciphertexts.
-
----
-
-### 5. **Proposals**
-
-Implements MLS proposal types, including Add, Remove, and Update.
-
-- **Features**:
-    - Serialize and deserialize proposals.
-    - Sign and verify proposal integrity.
-    - Validate proposal types and fields.
+#### WelcomeMessage
+1. Add support for group context extensions (Section 11.1).
+2. Improve validation for encrypted fields (e.g., nonce and ciphertext checks) to ensure consistency.
 
 ---
 
-### 6. **RatchetTree**
+## Contributions
 
-Manages the binary Ratchet Tree used for key derivation and group state representation.
-
-- **Features**:
-    - Initialize and update the Ratchet Tree.
-    - Synchronize tree states across members.
-    - Validate tree operations.
+Contributions are welcome! Please create an issue or submit a pull request.
 
 ---
-
-### 7. **TranscriptHashManager**
-
-Centralized manager for transcript hash updates and validation.
-
-- **Features**:
-    - Compute transcript hashes for all operations.
-    - Update hashes after each group operation.
-    - Validate hashes against expected values.
-
----
-
-### 8. **WelcomeMessage**
-
-Manages Welcome messages, which are used to onboard new members to the group.
-
-- **Features**:
-    - Serialize and deserialize Welcome messages.
-    - Encrypt and decrypt group secrets for new members.
-    - Synchronize the group state.
-
----
-
-### 9. **Tests**
-
-Comprehensive test suite to validate the functionality of all components.
-
-- **Features**:
-    - Unit tests for individual components.
-    - Integration tests for full group workflows.
-    - Performance tests for large groups.
-
----
-
-## TODO List
-
-### 1. Core Protocol Implementation
-
-- [ ]  Verify group state consistency during dynamic membership changes.
-- [ ]  Test all proposal types for serialization, deserialization, and validation.
-- [ ]  Finalize Commit and Welcome message handling.
-
-### 2. Cryptographic Operations
-
-- [ ]  Validate epoch secret derivation and transitions.
-- [ ]  Optimize Ratchet Tree updates for performance.
-- [ ]  Ensure tamper detection for all messages.
-
-### 3. Testing
-
-- [ ]  Write unit tests for all edge cases and error scenarios.
-- [ ]  Simulate full group workflows with known-good test vectors.
-- [ ]  Benchmark large group operations (e.g., 1000 members).
-
-### 4. Documentation
-
-- [ ]  Add examples for using each component.
-- [ ]  Write a developer guide for library internals.
-
-### 5. Packaging
-
-- [ ]  Prepare the library for distribution as a pip package.
-- [ ]  Publish to GitHub with a clear project structure.
-- [ ]  Publish to PyPI after thorough testing.
-
