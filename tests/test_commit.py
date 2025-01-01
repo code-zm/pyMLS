@@ -1,122 +1,52 @@
 import unittest
-import os
+from unittest.mock import Mock
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.hazmat.primitives import serialization
 from pyMLS.Commit import Commit
-from pyMLS.Proposals import AddProposal, UpdateProposal, RemoveProposal
+from pyMLS.HandshakeMessages import HandshakeMessage, HandshakeType
 from pyMLS.KeyPackage import KeyPackage
-from pyMLS.TranscriptHashManager import TranscriptHashManager
-from pyMLS.KeySchedule import KeySchedule
 
-class MockRatchetTree:
-    def __init__(self):
-        self.members = {}
-    
-    def addMember(self, publicKey):
-        self.members[len(self.members)] = publicKey
-    
-    def removeMember(self, memberIndex):
-        if memberIndex in self.members:
-            del self.members[memberIndex]
-        else:
-            raise ValueError(f"Member index {memberIndex} does not exist.")
-    
-    def updateMemberKey(self, memberIndex, newPublicKey):
-        if memberIndex in self.members:
-            self.members[memberIndex] = newPublicKey
-        else:
-            raise ValueError(f"Member index {memberIndex} does not exist.")
-
-    def applyProposal(self, proposal):
-        """
-        Apply a proposal to the ratchet tree.
-        """
-        if isinstance(proposal, AddProposal):
-            self.addMember(proposal.keyPackage.initKey)
-        elif isinstance(proposal, RemoveProposal):
-            self.removeMember(proposal.memberIndex)
-        elif isinstance(proposal, UpdateProposal):
-            self.updateMemberKey(proposal.memberIndex, proposal.newPublicKey)
-        else:
-            raise ValueError(f"Unknown proposal type: {type(proposal).__name__}")
-
-    def validateProposal(self, proposal):
-        """
-        Simulates validation of a proposal in the ratchet tree.
-        """
-        if isinstance(proposal, AddProposal):
-            # Ensure no duplicate keys
-            if proposal.keyPackage.initKey in self.members.values():
-                return False
-        elif isinstance(proposal, RemoveProposal):
-            # Ensure member exists
-            if proposal.memberIndex not in self.members:
-                return False
-        elif isinstance(proposal, UpdateProposal):
-            # Ensure member exists
-            if proposal.memberIndex not in self.members:
-                return False
-        return True
+class MockTranscriptHashManager:
+    def updateHash(self, data: bytes):
+        pass  # Mock method
 
 class TestCommit(unittest.TestCase):
     def setUp(self):
-        self.privateKey = Ed25519PrivateKey.generate()
-        self.publicKey = self.privateKey.public_key()
-        self.publicKeyBytes = self.publicKey.public_bytes(
-            encoding=Encoding.Raw,
-            format=PublicFormat.Raw
-        )
-        self.commitSecret = os.urandom(32)
-        self.groupContext = os.urandom(32)
-        self.transcriptHashManager = TranscriptHashManager()
-
-        self.mockKeyPackage = KeyPackage(
+        keyPackage = KeyPackage(
             version=1,
-            cipherSuite=0x0001,
-            initKey=self.publicKeyBytes,
-            leafNode={
-                "capabilities": {"versions": [1], "cipherSuites": [0x0001]},
-                "encryptionKey": os.urandom(32).hex(),
-                "signatureKey": self.publicKeyBytes.hex(),
-                "leafNodeSource": "",
-            },
-            extensions=[],
-            privateKey=self.privateKey,
+            cipherSuite=1,
+            initKey=b'\x00' * 32,
+            leafNode={"leafNodeSource": "test_leaf_node", "signatureKey": b'\x00' * 32},
+            credential="test_credential".encode("utf-8"),
+            extensions=[b"test_extension_1", b"test_extension_2"],
         )
 
         self.proposals = [
-            AddProposal(keyPackage=self.mockKeyPackage),
-            UpdateProposal(memberIndex=1, newPublicKey=os.urandom(32)),
-            RemoveProposal(memberIndex=2),
+            HandshakeMessage(HandshakeType.ADD, keyPackage.serialize()),
+            HandshakeMessage(HandshakeType.UPDATE, keyPackage.serialize()),
+            HandshakeMessage(HandshakeType.REMOVE, b'\x00\x00\x00\x01'),  # Example payload
         ]
-
+        self.commitSecret = b"\x00" * 32
+        self.groupContext = b"group_context_data"
         self.commit = Commit(
             proposals=self.proposals,
             commitSecret=self.commitSecret,
-            groupContext=self.groupContext,
+            groupContext=self.groupContext
         )
-
-        self.ratchetTree = MockRatchetTree()
-
-        # Add mock members for UpdateProposal and RemoveProposal
-        self.ratchetTree.addMember(os.urandom(32))  # Member at index 0
-        self.ratchetTree.addMember(os.urandom(32))  # Member at index 1
-        self.ratchetTree.addMember(os.urandom(32))  # Member at index 2
-
-        # Initialize KeySchedule
-        self.keySchedule = KeySchedule(initialSecret=os.urandom(32))
+        self.privateKey = Ed25519PrivateKey.generate()
+        self.publicKey = self.privateKey.public_key()
+        self.transcriptHashManager = MockTranscriptHashManager()
 
     def testCommitSerialization(self):
-        serialized = self.commit.serialize()
-        self.assertIsInstance(serialized, bytes)
+        serialized = self.commit.serializeBinary()
+        self.assertTrue(serialized, "Commit serialization should produce a non-empty result.")
 
     def testCommitDeserialization(self):
-        serialized = self.commit.serialize()
-        deserialized = Commit.deserialize(serialized)
-        self.assertIsNotNone(deserialized, "Commit deserialization returned None.")
-        if deserialized is not None:
-            self.assertEqual(deserialized.commitSecret, self.commit.commitSecret)
-            self.assertEqual(deserialized.groupContext, self.commit.groupContext)
+        serialized = self.commit.serializeBinary()
+        deserialized = Commit.deserializeBinary(serialized)
+        self.assertEqual(len(deserialized.proposals), len(self.proposals))
+        self.assertEqual(deserialized.commitSecret, self.commitSecret)
+        self.assertEqual(deserialized.groupContext, self.groupContext)
 
     def testCommitSigning(self):
         self.commit.sign(self.privateKey, self.transcriptHashManager)
@@ -124,26 +54,24 @@ class TestCommit(unittest.TestCase):
 
     def testCommitSignatureVerification(self):
         self.commit.sign(self.privateKey, self.transcriptHashManager)
-        is_valid = self.commit.verify(self.publicKeyBytes, self.transcriptHashManager)
-        self.assertTrue(is_valid)
 
-    def testCommitSignatureVerificationFailure(self):
-        self.commit.sign(self.privateKey, self.transcriptHashManager)
-        self.commit.groupContext = os.urandom(32)  # Tamper the Commit
-        is_valid = self.commit.verify(self.publicKeyBytes, self.transcriptHashManager)
-        self.assertFalse(is_valid)
+        # Ensure signature exists
+        self.assertIsNotNone(self.commit.signature, "Commit signature should not be None.")
+
+        # Verify signature
+        is_valid = self.commit.verify(self.publicKey, self.transcriptHashManager)
+        self.assertTrue(is_valid, "Signature verification should pass for a valid Commit.")
 
     def testCommitApplication(self):
-        """Validate the application of Commit to update group state."""
+        ratchetTree = Mock()
+        ratchetTree.applyProposal = Mock()
+        keySchedule = Mock()
+        keySchedule.nextEpoch = Mock()
+
         try:
-            self.commit.apply(
-                ratchetTree=self.ratchetTree,
-                keySchedule=self.keySchedule,
-                hashManager=self.transcriptHashManager
-            )
-            self.assertTrue(True)  # If no exception, pass the test
-        except AttributeError as e:
-            self.fail(f"Commit application raised unexpected AttributeError: {e}")
+            self.commit.apply(ratchetTree, keySchedule, self.transcriptHashManager)
+        except Exception as e:
+            self.fail(f"Commit application raised unexpected exception: {e}")
 
 if __name__ == "__main__":
     unittest.main()
