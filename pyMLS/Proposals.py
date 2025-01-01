@@ -1,160 +1,113 @@
-from typing import Dict, Any, List
+import struct
+from typing import List
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-import json
 from .TranscriptHashManager import TranscriptHashManager
 from .KeyPackage import KeyPackage
-from .HandshakeTypes import HandshakeType
+from .HandshakeMessages import HandshakeMessage, HandshakeType
 
-DEBUG = False
+DEBUG = True
 
-class Proposal:
-    """
-    Base class for all MLS proposals.
-    """
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Converts the proposal to a dictionary representation.
-        """
-        raise NotImplementedError("Subclasses must implement to_dict method.")
-
-    def serialize(self) -> bytes:
-        """
-        Serializes the proposal to a JSON object.
-        """
-        try:
-            data = self.to_dict()
-            serialized = json.dumps(data, ensure_ascii=False)
-            if DEBUG:
-                print(f"Serialized Proposal: {serialized}")
-            return serialized.encode("utf-8")
-        except Exception as e:
-            print(f"Error during Proposal serialization: {e}")
-            raise
-
-    @staticmethod
-    def deserialize(data: bytes) -> "Proposal":
-        """
-        Deserializes a Proposal from a JSON object.
-        """
-        try:
-            rawData = data.decode("utf-8").strip()
-            if DEBUG:
-                print(f"Raw Proposal Data: {rawData}")
-            proposalData = json.loads(rawData)
-            if DEBUG:
-                print(f"Deserialized Proposal Data: {proposalData}")
-
-            proposalType = proposalData["proposalType"]
-            if proposalType == "AddProposal":
-                return AddProposal.from_dict(proposalData)
-            elif proposalType == "UpdateProposal":
-                return UpdateProposal.from_dict(proposalData)
-            elif proposalType == "RemoveProposal":
-                return RemoveProposal.from_dict(proposalData)
-            else:
-                raise ValueError(f"Unknown Proposal Type: {proposalType}")
-        except Exception as e:
-            print(f"Error during Proposal deserialization: {e}")
-            raise
-
-class AddProposal:
+class AddProposal(HandshakeMessage):
     """
     Represents an AddProposal in the MLS protocol, containing a KeyPackage.
     """
     def __init__(self, keyPackage: KeyPackage):
-        """
-        Initialize an AddProposal with a given KeyPackage.
-
-        :param keyPackage: The KeyPackage associated with the AddProposal.
-        """
+        super().__init__(HandshakeType.ADD, keyPackage.serialize())
         self.keyPackage = keyPackage
 
-    def serialize(self) -> bytes:
+    def serializeBinary(self) -> bytes:
         """
-        Serialize the AddProposal, including the proposalType.
+        Serialize the AddProposal into binary format.
         """
-        data = {
-            "proposalType": HandshakeType.ADD.value,
-            "keyPackage": self.keyPackage.serialize().hex(),
-        }
-        return json.dumps(data).encode("utf-8")
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "proposalType": "AddProposal",
-            "keyPackage": self.keyPackage.serialize().hex(),
-        }
+        serialized = super().serializeBinary()
+        if DEBUG:
+            print(f"Serializing AddProposal: keyPackage={self.keyPackage}")
+            print(f"[SERIALIZEDDATA]{serialized}")
+        return serialized
 
     @staticmethod
-    def from_dict(data: Dict[str, Any]) -> "AddProposal":
+    def deserializeBinary(data: bytes) -> "AddProposal":
         """
-        Construct an AddProposal from a dictionary.
+        Deserialize an AddProposal from binary format.
         """
-        keyPackage = KeyPackage.deserialize(bytes.fromhex(data["keyPackage"]))
+        message = HandshakeMessage.deserializeBinary(data)
+        keyPackage = KeyPackage.deserialize(message.payload)
+        if DEBUG:
+            print(f"Deserializing AddProposal: keyPackage={keyPackage}")
         return AddProposal(keyPackage)
+
+
+class UpdateProposal(HandshakeMessage):
+    """
+    Represents an UpdateProposal in the MLS protocol.
+    """
+    def __init__(self, keyPackage: KeyPackage):
+        super().__init__(HandshakeType.UPDATE, keyPackage.serialize())
+        self.keyPackage = keyPackage
+
+    def serializeBinary(self) -> bytes:
+        """
+        Serialize the UpdateProposal into binary format.
+        """
+        serialized = super().serializeBinary()
+        if DEBUG:
+            print(f"Serializing UpdateProposal: keyPackage={self.keyPackage}")
+            print(f"[SERIALIZEDDATA]{serialized}")
+        return serialized
 
     @staticmethod
-    def deserialize(data: bytes) -> "AddProposal":
+    def deserializeBinary(data: bytes) -> "UpdateProposal":
         """
-        Deserialize an AddProposal from bytes.
+        Deserialize an UpdateProposal from binary format.
         """
-        parsed = json.loads(data.decode("utf-8"))
-        keyPackage = KeyPackage.deserialize(bytes.fromhex(parsed["keyPackage"]))
-        return AddProposal(keyPackage)
+        message = HandshakeMessage.deserializeBinary(data)
+        keyPackage = KeyPackage.deserialize(message.payload)
+        if DEBUG:
+            print(f"Deserializing UpdateProposal: keyPackage={keyPackage}")
+        return UpdateProposal(keyPackage)
 
-class RemoveProposal(Proposal):
+
+class RemoveProposal(HandshakeMessage):
     """
     Represents a RemoveProposal in the MLS protocol.
     """
     def __init__(self, memberIndex: int):
-        self.proposalType = "RemoveProposal"
+        payload = struct.pack("!I", memberIndex)
+        super().__init__(HandshakeType.REMOVE, payload)
         self.memberIndex = memberIndex
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "proposalType": "RemoveProposal",
-            "memberIndex": self.memberIndex
-        }
-    
-    @staticmethod
-    def from_dict(data: Dict[str, Any]) -> "RemoveProposal":
-        return RemoveProposal(
-            memberIndex=data["memberIndex"]
-        )
+    def serializeBinary(self) -> bytes:
+        """
+        Serialize the RemoveProposal into binary format.
+        """
+        serialized = super().serializeBinary()
+        if DEBUG:
+            print(f"Serializing RemoveProposal: memberIndex={self.memberIndex}")
+            print(f"[SERIALIZEDDATA]{serialized}")
+        return serialized
 
-class UpdateProposal(Proposal):
-    """
-    Represents an UpdateProposal in the MLS protocol.
-    """
-    def __init__(self, memberIndex: int, newPublicKey: bytes):
-        self.proposalType = "UpdateProposal"
-        self.memberIndex = memberIndex
-        self.newPublicKey = newPublicKey
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "proposalType": "UpdateProposal",
-            "memberIndex": self.memberIndex,
-            "newPublicKey": self.newPublicKey.hex()
-        }
-    
     @staticmethod
-    def from_dict(data: Dict[str, Any]) -> "UpdateProposal":
-        return UpdateProposal(
-            memberIndex=data["memberIndex"],
-            newPublicKey=bytes.fromhex(data["newPublicKey"]),
-        )
+    def deserializeBinary(data: bytes) -> "RemoveProposal":
+        """
+        Deserialize a RemoveProposal from binary format.
+        """
+        message = HandshakeMessage.deserializeBinary(data)
+        memberIndex = struct.unpack("!I", message.payload[:4])[0]
+        if DEBUG:
+            print(f"Deserializing RemoveProposal: memberIndex={memberIndex}")
+        return RemoveProposal(memberIndex)
+
 
 class ProposalSigner:
     """
     Provides functionality for signing and verifying proposals.
     """
     @staticmethod
-    def signProposal(proposal: Proposal, privateKey: Ed25519PrivateKey, hashManager: TranscriptHashManager) -> bytes:
+    def signProposal(proposal: HandshakeMessage, privateKey: Ed25519PrivateKey, hashManager: TranscriptHashManager) -> bytes:
         """
         Signs a serialized proposal and updates the transcript hash.
         """
-        serializedProposal = proposal.serialize()
+        serializedProposal = proposal.serializeBinary()
         hashManager.updateHash(serializedProposal)  # Update the transcript hash
         signature = privateKey.sign(serializedProposal)
         if DEBUG:
@@ -162,12 +115,12 @@ class ProposalSigner:
         return signature
 
     @staticmethod
-    def verifyProposal(proposal: Proposal, signature: bytes, publicKey: bytes, hashManager: TranscriptHashManager) -> bool:
+    def verifyProposal(proposal: HandshakeMessage, signature: bytes, publicKey: bytes, hashManager: TranscriptHashManager) -> bool:
         """
         Verifies a signed proposal and updates the transcript hash.
         """
         try:
-            serializedProposal = proposal.serialize()
+            serializedProposal = proposal.serializeBinary()
             hashManager.updateHash(serializedProposal)  # Update the transcript hash
             verifierKey = Ed25519PublicKey.from_public_bytes(publicKey)
             verifierKey.verify(signature, serializedProposal)
@@ -177,41 +130,42 @@ class ProposalSigner:
                 print(f"Error during proposal verification: {e}")
             return False
 
+
 class ProposalList:
     """
     Represents a list of proposals and manages their integration with the TranscriptHashManager.
     """
-    def __init__(self, proposals: List[Proposal], hashManager: TranscriptHashManager):
+    def __init__(self, proposals: List[HandshakeMessage], hashManager: TranscriptHashManager):
         self.proposals = proposals
         self.hashManager = hashManager
 
-    def serialize(self) -> bytes:
+    def serializeBinary(self) -> bytes:
         """
         Serializes the proposal list and updates the transcript hash.
         """
-        serialized = json.dumps([proposal.to_dict() for proposal in self.proposals], ensure_ascii=False).encode("utf-8")
+        serialized = b"".join([p.serializeBinary() for p in self.proposals])
         self.hashManager.updateHash(serialized)  # Update the transcript hash
         return serialized
 
-    def addProposal(self, proposal: Proposal):
+    def addProposal(self, proposal: HandshakeMessage):
         """
         Adds a proposal to the list and updates the transcript hash.
         """
         self.proposals.append(proposal)
-        self.hashManager.updateHash(self.serialize())  # Update the transcript hash
+        self.hashManager.updateHash(self.serializeBinary())  # Update the transcript hash
 
     def signList(self, privateKey: Ed25519PrivateKey) -> bytes:
         """
         Signs the serialized list of proposals.
         """
-        serialized = self.serialize()
+        serialized = self.serializeBinary()
         return privateKey.sign(serialized)
 
     def verifyList(self, signature: bytes, publicKey: Ed25519PublicKey) -> bool:
         """
         Verifies the signed list of proposals.
         """
-        serialized = self.serialize()
+        serialized = self.serializeBinary()
         try:
             publicKey.verify(signature, serialized)
             return True
