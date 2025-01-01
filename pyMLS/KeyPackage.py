@@ -1,143 +1,176 @@
-import json
-from typing import Dict, Any, List
+import struct
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-from cryptography.hazmat.primitives.hashes import Hash, SHA256
-from cryptography.hazmat.primitives import serialization
-
-DEBUG = False
+from cryptography.hazmat.primitives import hashes
+from typing import List, Optional
 
 class KeyPackage:
-    def __init__(self, version: int, cipherSuite: int, initKey: bytes, leafNode: Dict[str, Any], extensions: List[Any], privateKey: Ed25519PrivateKey = None):
+    def __init__(
+        self,
+        version: int,
+        cipherSuite: int,
+        initKey: bytes,
+        credential: bytes,
+        leafNode: dict,
+        extensions: List[bytes],
+        signature: Optional[bytes] = None,
+    ):
         self.version = version
         self.cipherSuite = cipherSuite
         self.initKey = initKey
+        self.credential = credential
         self.leafNode = leafNode
         self.extensions = extensions
-        self.signature = None
-
-        if DEBUG:
-            print(f"Initializing KeyPackage: version={self.version}, cipherSuite={self.cipherSuite}, initKey={self.initKey.hex()}")
-
-        # Automatically sign if privateKey is provided
-        if privateKey:
-            if DEBUG:
-                print("Signing KeyPackage with provided privateKey.")
-            self.sign(privateKey)
-
-    def serializeTbs(self) -> bytes:
-        """
-        Serialize the KeyPackageTBS (to-be-signed portion of the KeyPackage).
-        """
-        tbs = {
-            "version": self.version,
-            "cipherSuite": self.cipherSuite,
-            "initKey": self.initKey.hex(),
-            "leafNode": self.leafNode,
-            "extensions": self.extensions,
-        }
-        if DEBUG:
-            print(f"Serialized TBS: {tbs}")
-        return json.dumps(tbs, ensure_ascii=False).encode("utf-8")
+        self.signature = signature
 
     def serialize(self) -> bytes:
         """
-        Serialize the complete KeyPackage, including the signature.
+        Serialize the KeyPackage into binary format.
         """
-        data = {
-            "version": self.version,
-            "cipherSuite": self.cipherSuite,
-            "initKey": self.initKey.hex(),
-            "leafNode": self.leafNode,
-            "extensions": self.extensions,
-            "signature": self.signature.hex() if self.signature else None,
-        }
-        if DEBUG:
-            print(f"Serialized KeyPackage: {data}")
-        return json.dumps(data, ensure_ascii=False).encode("utf-8")
+        leafNodeSource = self.leafNode.get("leafNodeSource", "").encode("utf-8")
+        signatureKey = self.leafNode.get("signatureKey", b"")
+
+        serialized = struct.pack(
+            f"!HB{len(self.initKey)}sH{len(self.credential)}sH{len(leafNodeSource)}sH{len(signatureKey)}sH",
+            self.version,
+            self.cipherSuite,
+            self.initKey,
+            len(self.credential),
+            self.credential,
+            len(leafNodeSource),
+            leafNodeSource,
+            len(signatureKey),
+            signatureKey,
+            len(self.extensions),
+        )
+
+        for ext in self.extensions:
+            serialized += struct.pack(f"!H{len(ext)}s", len(ext), ext)
+
+        if self.signature:
+            serialized += struct.pack(f"!H{len(self.signature)}s", len(self.signature), self.signature)
+        else:
+            serialized += struct.pack("!H", 0)
+
+        return serialized
 
     @staticmethod
     def deserialize(data: bytes) -> "KeyPackage":
         """
-        Deserialize a KeyPackage from its serialized form.
+        Deserialize binary data into a KeyPackage object.
         """
-        obj = json.loads(data.decode("utf-8"))
-        signature = bytes.fromhex(obj["signature"]) if obj["signature"] else None
-        if DEBUG:
-            print(f"Deserializing KeyPackage: {obj}")
-        return KeyPackage(
-            version=obj["version"],
-            cipherSuite=obj["cipherSuite"],
-            initKey=bytes.fromhex(obj["initKey"]),
-            leafNode=obj["leafNode"],
-            extensions=obj["extensions"],
-            privateKey=None
+        offset = 0
+
+        try:
+            version, cipherSuite = struct.unpack_from("!HB", data, offset)
+            offset += 3
+
+            initKeyLength = 32  # Assuming fixed size for initKey
+            if len(data) < offset + initKeyLength:
+                raise ValueError("Input data is too short for initKey.")
+
+            initKey = struct.unpack_from(f"!{initKeyLength}s", data, offset)[0]
+            offset += initKeyLength
+
+            # Deserialize credential
+            credentialLength = struct.unpack_from("!H", data, offset)[0]
+            offset += 2
+            if len(data) < offset + credentialLength:
+                raise ValueError("Input data is too short for credential.")
+
+            credential = data[offset:offset + credentialLength]
+            offset += credentialLength
+
+            # Deserialize leafNode
+            leafNodeSourceLength = struct.unpack_from("!H", data, offset)[0]
+            offset += 2
+            if len(data) < offset + leafNodeSourceLength:
+                raise ValueError("Input data is too short for leafNodeSource.")
+
+            leafNodeSource = data[offset:offset + leafNodeSourceLength].decode("utf-8")
+            offset += leafNodeSourceLength
+
+            signatureKeyLength = struct.unpack_from("!H", data, offset)[0]
+            offset += 2
+            if len(data) < offset + signatureKeyLength:
+                raise ValueError("Input data is too short for signatureKey.")
+
+            signatureKey = data[offset:offset + signatureKeyLength]
+            offset += signatureKeyLength
+
+            # Deserialize extensions
+            extensions = []
+            extensionsLength = struct.unpack_from("!H", data, offset)[0]
+            offset += 2
+            for _ in range(extensionsLength):
+                extLength = struct.unpack_from("!H", data, offset)[0]
+                offset += 2
+                if len(data) < offset + extLength:
+                    raise ValueError("Input data is too short for extensions.")
+                ext = data[offset:offset + extLength]
+                offset += extLength
+                extensions.append(ext)
+
+            # Deserialize signature
+            signatureLength = struct.unpack_from("!H", data, offset)[0]
+            offset += 2
+            signature = data[offset:offset + signatureLength] if signatureLength > 0 else None
+
+            leafNode = {"leafNodeSource": leafNodeSource, "signatureKey": signatureKey}
+
+            return KeyPackage(version, cipherSuite, initKey, credential, leafNode, extensions, signature)
+
+        except struct.error as e:
+            raise ValueError(f"Error deserializing KeyPackage: {e}")
+
+    def serializeTbs(self) -> bytes:
+        """
+        Serialize the "to-be-signed" portion of the KeyPackage.
+        """
+        leafNodeSource = self.leafNode.get("leafNodeSource", "").encode("utf-8")
+        signatureKey = self.leafNode.get("signatureKey", b"")
+
+        # Ensure credential is in bytes
+        if not isinstance(self.credential, bytes):
+            raise TypeError(f"Credential must be bytes, got {type(self.credential)} instead.")
+
+        serialized = struct.pack(
+            f"!HB{len(self.initKey)}sH{len(self.credential)}sH{len(leafNodeSource)}sH{len(signatureKey)}sH",
+            self.version,
+            self.cipherSuite,
+            self.initKey,
+            len(self.credential),
+            self.credential,
+            len(leafNodeSource),
+            leafNodeSource,
+            len(signatureKey),
+            signatureKey,
+            len(self.extensions),
         )
+
+        for ext in self.extensions:
+            if not isinstance(ext, bytes):
+                raise TypeError(f"Extension must be bytes, got {type(ext)} instead.")
+            serialized += struct.pack(f"!H{len(ext)}s", len(ext), ext)
+
+        return serialized
 
     def sign(self, privateKey: Ed25519PrivateKey):
         """
-        Sign the KeyPackageTBS structure.
+        Sign the serialized "to-be-signed" portion of the KeyPackage.
         """
-        tbs = self.serializeTbs()
-        self.signature = privateKey.sign(tbs)
-        if DEBUG:
-            print(f"Signed KeyPackage. Signature: {self.signature.hex()}")
+        serializedTBS = self.serializeTbs()  # Serialized data to be signed
+        self.signature = privateKey.sign(serializedTBS)
 
-    def validateSignature(self) -> bool:
+    def validateSignature(self, publicKey: Ed25519PublicKey) -> bool:
         """
-        Validate the KeyPackage signature using the public key from the credential.
+        Validate the signature of the KeyPackage.
         """
         if not self.signature:
-            raise ValueError("KeyPackage is not signed.")
-        publicKeyBytes = bytes.fromhex(self.leafNode["signatureKey"])
-        publicKey = Ed25519PublicKey.from_public_bytes(publicKeyBytes)
-        tbs = self.serializeTbs()
-        if DEBUG:
-            print(f"Validating signature. Public key: {publicKeyBytes.hex()}, TBS: {tbs}")
+            raise ValueError("KeyPackage has no signature to validate.")
+
+        serializedTBS = self.serializeTbs()
         try:
-            publicKey.verify(self.signature, tbs)
-            if DEBUG:
-                print("Signature validation succeeded.")
+            publicKey.verify(self.signature, serializedTBS)
             return True
-        except Exception as e:
-            if DEBUG:
-                print(f"Signature validation failed: {e}")
+        except Exception:
             return False
-
-    def validate(self, groupVersion: int, groupCipherSuite: int) -> bool:
-        """
-        Validate the KeyPackage according to RFC 9420.
-        """
-        if DEBUG:
-            print(f"Validating KeyPackage. Group version: {groupVersion}, Group cipherSuite: {groupCipherSuite}")
-
-        # Check protocol version and cipher suite
-        if self.version != groupVersion or self.cipherSuite != groupCipherSuite:
-            errorMessage = "Version or cipher suite mismatch."
-            if DEBUG:
-                print(errorMessage)
-            raise ValueError(errorMessage)
-
-        # Check that leafNode is valid
-        if self.leafNode["leafNodeSource"] != "key_package":
-            errorMessage = "Invalid leafNodeSource in KeyPackage."
-            if DEBUG:
-                print(errorMessage)
-            raise ValueError(errorMessage)
-
-        # Ensure encryptionKey differs from initKey
-        if self.leafNode["encryptionKey"] == self.initKey.hex():
-            errorMessage = "encryptionKey must differ from initKey."
-            if DEBUG:
-                print(errorMessage)
-            raise ValueError(errorMessage)
-
-        # Validate signature
-        if not self.validateSignature():
-            errorMessage = "Invalid KeyPackage signature."
-            if DEBUG:
-                print(errorMessage)
-            raise ValueError(errorMessage)
-
-        if DEBUG:
-            print("KeyPackage validation succeeded.")
-        return True
