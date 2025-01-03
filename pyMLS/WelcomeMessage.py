@@ -1,238 +1,234 @@
 import os
+import struct
 from typing import Dict, Any
+from cryptography.hazmat.primitives.serialization import PrivateFormat, NoEncryption, Encoding
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from .Proposals import AddProposal
-from .RatchetTree import RatchetTree, Node
-from .KeySchedule import KeySchedule
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from .KeyPackage import KeyPackage
-from .TranscriptHashManager import TranscriptHashManager
-import json
 
-DEBUG = False
 
 class WelcomeMessage:
     """
     Handles Welcome messages for new members in the MLS protocol.
     """
 
-    def __init__(self, groupContext: bytes, ratchetTree, keySchedule, groupVersion: int, groupCipherSuite: int, keyPackage: KeyPackage):
-        """
-        Initialize the WelcomeMessage handler.
-        :param groupContext: Current group context (e.g., group ID, epoch, root hash).
-        :param ratchetTree: RatchetTree instance to access group state.
-        :param keySchedule: KeySchedule instance for deriving secrets.
-        """
+    def __init__(self, groupContext: bytes, ratchetTree, keySchedule, groupVersion: int, groupCipherSuite: int):
         self.groupContext = groupContext
         self.ratchetTree = ratchetTree
         self.keySchedule = keySchedule
         self.groupVersion = groupVersion
         self.groupCipherSuite = groupCipherSuite
-        self.keyPackage = keyPackage
-        
+
+    def hpke_encrypt(self, recipient_public_key_bytes: bytes, plaintext: bytes, aad: bytes = b"") -> (bytes, bytes):
+        """
+        Encrypt a plaintext using HPKE.
+        :param recipient_public_key_bytes: Recipient's public key in raw format.
+        :param plaintext: The plaintext to encrypt.
+        :param aad: Additional authenticated data.
+        :return: (ephemeral_public_key, ciphertext)
+        """
+        # Generate ephemeral key pair
+        ephemeral_private_key = X25519PrivateKey.generate()
+        ephemeral_public_key = ephemeral_private_key.public_key()
+
+        # Load recipient's public key
+        recipient_public_key = X25519PublicKey.from_public_bytes(recipient_public_key_bytes)
+
+        # Perform Diffie-Hellman key exchange
+        shared_secret = ephemeral_private_key.exchange(recipient_public_key)
+
+        # Derive key and nonce
+        hkdf = HKDF(algorithm=SHA256(), length=32 + 12, salt=None, info=b"hpke-context")
+        key_and_nonce = hkdf.derive(shared_secret)
+        encryption_key = key_and_nonce[:32]
+        nonce = key_and_nonce[32:]
+
+        # Encrypt plaintext
+        aesgcm = AESGCM(encryption_key)
+        ciphertext = aesgcm.encrypt(nonce, plaintext, aad)
+
+        # Return ephemeral public key and ciphertext
+        return ephemeral_public_key.public_bytes(Encoding.Raw, PublicFormat.Raw), ciphertext
+
+    def hpke_decrypt(self, recipient_private_key: X25519PrivateKey, ephemeral_public_key_bytes: bytes, ciphertext: bytes, aad: bytes = b"") -> bytes:
+        """
+        Decrypt a ciphertext using HPKE.
+        :param recipient_private_key: Recipient's private key object.
+        :param ephemeral_public_key_bytes: Ephemeral public key sent by the sender.
+        :param ciphertext: The ciphertext to decrypt.
+        :param aad: Additional authenticated data.
+        :return: The decrypted plaintext.
+        """
+        # Load ephemeral public key
+        ephemeral_public_key = X25519PublicKey.from_public_bytes(ephemeral_public_key_bytes)
+
+        # Perform Diffie-Hellman key exchange
+        shared_secret = recipient_private_key.exchange(ephemeral_public_key)
+
+        # Derive key and nonce
+        hkdf = HKDF(algorithm=SHA256(), length=32 + 12, salt=None, info=b"hpke-context")
+        key_and_nonce = hkdf.derive(shared_secret)
+        encryption_key = key_and_nonce[:32]
+        nonce = key_and_nonce[32:]
+
+        # Decrypt ciphertext
+        aesgcm = AESGCM(encryption_key)
+        plaintext = aesgcm.decrypt(nonce, ciphertext, aad)
+
+        return plaintext
 
     def createWelcome(self, keyPackage: KeyPackage) -> Dict[str, Any]:
         """
         Creates a Welcome message for a new member using their KeyPackage.
-        :param keyPackage: KeyPackage object for the new member.
-        :return: A dictionary representing the Welcome message.
         """
         if not isinstance(keyPackage, KeyPackage):
             raise ValueError("createWelcome requires a valid KeyPackage.")
 
-        # Use the group_version and group_cipher_suite from the WelcomeMessage instance
-        keyPackage.validate(self.groupVersion, self.groupCipherSuite)
+        if keyPackage.version != self.groupVersion or keyPackage.cipherSuite != self.groupCipherSuite:
+            raise ValueError("KeyPackage version or cipher suite mismatch.")
 
-        # Serialize the full ratchet tree
         publicRatchetTree = self.ratchetTree.getPublicState()
-        if DEBUG:
-            print(f"Generated publicRatchetTree: {publicRatchetTree}")
 
-        # Derive a joiner_secret (simulated as random here for testing purposes)
-        joinerSecret = os.urandom(32)
+        # Derive group secret (randomly generated)
+        groupSecret = os.urandom(32)
 
-        # Derive the symmetric encryption key and nonce from the joiner_secret
-        encryptionKey = HKDF(
+        # Encrypt groupSecret using HPKE
+        ephemeral_public_key, encryptedGroupSecrets = self.hpke_encrypt(
+            recipient_public_key_bytes=keyPackage.initKey,
+            plaintext=groupSecret
+        )
+
+        # Use groupSecret to derive joinerSecret
+        joinerSecret = HKDF(
             algorithm=SHA256(),
             length=32,
             salt=None,
-            info=b"welcome_encryption_key"
-        ).derive(joinerSecret)
+            info=b"mls-joiner-secret"
+        ).derive(groupSecret)
 
-        nonce = HKDF(
-            algorithm=SHA256(),
-            length=12,
-            salt=None,
-            info=b"welcome_nonce"
-        ).derive(joinerSecret)
-
-        # Ensure the epochSecret and groupContext are bytes-like
+        # Derive symmetric encryption key and nonce for epochSecret
         epochSecret = self.keySchedule.getEpochSecrets()["epochSecret"]
-        groupContext = self.groupContext
+        aesgcm = AESGCM(joinerSecret[:16])
+        nonce = joinerSecret[16:28]
+        encryptedEpochSecret = aesgcm.encrypt(nonce, epochSecret, self.groupContext)
 
-        if not isinstance(epochSecret, bytes):
-            epochSecret = bytes.fromhex(epochSecret)
-
-        if not isinstance(groupContext, bytes):
-            groupContext = groupContext.encode('utf-8')
-
-        # Encrypt the epoch secret using the symmetric key
-        aesGcm = AESGCM(encryptionKey)
-        encryptedEpochSecret = aesGcm.encrypt(
-            nonce,
-            epochSecret,
-            groupContext
-        )
-
-        # Simulate encrypted_group_secrets (would normally involve HPKE encryption)
-        encryptedGroupSecrets = joinerSecret  # Placeholder for demonstration
-
-        # Prepare and return the Welcome message
         welcomeMessage = {
-            "groupContext": groupContext.hex(),
-            "encryptedGroupSecrets": encryptedGroupSecrets.hex(),
-            "encryptedEpochSecret": (nonce + encryptedEpochSecret).hex(),
+            "groupContext": self.groupContext,
+            "encryptedGroupSecrets": ephemeral_public_key + encryptedGroupSecrets,
+            "encryptedEpochSecret": nonce + encryptedEpochSecret,
             "publicRatchetTree": publicRatchetTree,
-            "keyPackage": keyPackage.serialize().decode("utf-8"),
+            "keyPackage": keyPackage.serialize(),
         }
         return welcomeMessage
 
-
-    def processWelcome(self, welcomeMessage: Dict[str, Any], privateKey: bytes):
+    def processWelcome(self, welcomeMessage: Dict[str, Any], privateKey: X25519PrivateKey):
         """
         Processes a Welcome message to initialize the new member's state.
-        :param welcomeMessage: The received Welcome message as a dictionary.
-        :param privateKey: Private key of the new member for decrypting the group secrets.
         """
-        # Deserialize fields from the WelcomeMessage
-        encryptedGroupSecrets = bytes.fromhex(welcomeMessage["encryptedGroupSecrets"])
-        encryptedEpochSecret = bytes.fromhex(welcomeMessage["encryptedEpochSecret"])
-        groupContext = bytes.fromhex(welcomeMessage["groupContext"])
-        publicRatchetTree = welcomeMessage["publicRatchetTree"]
+        encryptedGroupSecrets = welcomeMessage["encryptedGroupSecrets"]
+        ephemeral_public_key = encryptedGroupSecrets[:32]
+        ciphertext = encryptedGroupSecrets[32:]
 
-        # Placeholder: Simulate joinerSecret derivation for testing
-        joinerSecret = encryptedGroupSecrets
+        # Decrypt groupSecret using HPKE
+        groupSecret = self.hpke_decrypt(
+            recipient_private_key=privateKey,
+            ephemeral_public_key_bytes=ephemeral_public_key,
+            ciphertext=ciphertext,
+        )
 
-        # Derive the symmetric decryption key and nonce from the joiner_secret
-        encryptionKey = HKDF(
+        # Derive joinerSecret from groupSecret
+        joinerSecret = HKDF(
             algorithm=SHA256(),
             length=32,
             salt=None,
-            info=b"welcome_encryption_key"
-        ).derive(joinerSecret)
+            info=b"mls-joiner-secret"
+        ).derive(groupSecret)
 
-        nonce = HKDF(
-            algorithm=SHA256(),
-            length=12,
-            salt=None,
-            info=b"welcome_nonce"
-        ).derive(joinerSecret)
+        # Derive symmetric decryption key and nonce from joinerSecret
+        aesgcm = AESGCM(joinerSecret[:16])
+        nonce = joinerSecret[16:28]
 
-        # Extract the actual nonce and ciphertext from the encrypted epoch secret
+        # Decrypt epochSecret
+        encryptedEpochSecret = welcomeMessage["encryptedEpochSecret"]
         extractedNonce = encryptedEpochSecret[:12]
         ciphertext = encryptedEpochSecret[12:]
 
         if extractedNonce != nonce:
-            raise ValueError("Nonce mismatch between encryption and decryption.")
+            raise ValueError("Nonce mismatch during decryption.")
 
-        # Decrypt the epoch secret
-        aesGcm = AESGCM(encryptionKey)
-        epochSecret = aesGcm.decrypt(nonce, ciphertext, groupContext)
+        epochSecret = aesgcm.decrypt(nonce, ciphertext, self.groupContext)
 
-        # Update the key schedule with the decrypted epoch secret
+        # Update the key schedule with the decrypted epochSecret
         self.keySchedule.currentEpochSecret = epochSecret
 
         # Sync the ratchet tree with the provided public state
-        self.ratchetTree.syncTree(publicRatchetTree)
+        self.ratchetTree.syncTree(welcomeMessage["publicRatchetTree"])
 
-    def serialize(self) -> bytes:
+    def serializeBinary(self, welcomeMessage: Dict[str, Any]) -> bytes:
         """
-        Serializes the WelcomeMessage into JSON format.
-        Recursively converts bytes to hex for JSON compatibility.
+        Serialize the WelcomeMessage to binary format.
         """
-        def convert_bytes(obj):
-            if isinstance(obj, bytes):
-                return obj.hex()
-            elif isinstance(obj, list):
-                return [convert_bytes(item) for item in obj]
-            elif isinstance(obj, dict):
-                return {key: convert_bytes(value) for key, value in obj.items()}
-            else:
-                return obj
+        groupContextLen = len(welcomeMessage["groupContext"])
+        secretsLen = len(welcomeMessage["encryptedGroupSecrets"])
+        epochSecretLen = len(welcomeMessage["encryptedEpochSecret"])
+        publicTreeBytes = b''.join(welcomeMessage["publicRatchetTree"])
+        keyPackageBytes = welcomeMessage["keyPackage"]
 
-        try:
-            if DEBUG:
-                print("Serializing WelcomeMessage...")
-            # Ensure that a valid KeyPackage is available
-            if not isinstance(self.keyPackage, KeyPackage):
-                raise ValueError("serialize requires a valid KeyPackage.")
-            
-            # Generate the WelcomeMessage using a properly initialized KeyPackage
-            welcomeMessage = self.createWelcome(self.keyPackage)
-            if DEBUG:
-                print(f"Serialized publicRatchetTree: {welcomeMessage['publicRatchetTree']}")
-            serializedMessage = convert_bytes(welcomeMessage)
-            return json.dumps(serializedMessage, ensure_ascii=False).encode("utf-8")
-        except Exception as e:
-            print(f"Error serializing WelcomeMessage: {e}")
-            raise
-
+        return struct.pack(
+            f"!I{groupContextLen}sI{secretsLen}sI{epochSecretLen}sI{len(publicTreeBytes)}s{len(keyPackageBytes)}s",
+            groupContextLen,
+            welcomeMessage["groupContext"],
+            secretsLen,
+            welcomeMessage["encryptedGroupSecrets"],
+            epochSecretLen,
+            welcomeMessage["encryptedEpochSecret"],
+            len(publicTreeBytes),
+            publicTreeBytes,
+            keyPackageBytes,
+        )
 
     @staticmethod
-    def deserialize(data: bytes) -> "WelcomeMessage":
+    def deserializeBinary(data: bytes) -> Dict[str, Any]:
         """
-        Deserializes a WelcomeMessage from JSON format.
+        Deserialize binary data into a WelcomeMessage dictionary.
         """
-        def convert_hex(obj):
-            if isinstance(obj, str):
-                try:
-                    return bytes.fromhex(obj)
-                except ValueError:
-                    return obj
-            elif isinstance(obj, list):
-                return [convert_hex(item) for item in obj]
-            elif isinstance(obj, dict):
-                return {key: convert_hex(value) for key, value in obj.items()}
-            else:
-                return obj
+        offset = 0
 
-        try:
-            parsed = json.loads(data.decode("utf-8"))
-            parsed = convert_hex(parsed)
+        groupContextLen = struct.unpack("!I", data[offset:offset + 4])[0]
+        offset += 4
+        groupContext = data[offset:offset + groupContextLen]
+        offset += groupContextLen
 
-            groupContext = parsed["groupContext"]
-            encryptedGroupSecrets = parsed["encryptedGroupSecrets"]
-            encryptedEpochSecret = parsed["encryptedEpochSecret"]
+        secretsLen = struct.unpack("!I", data[offset:offset + 4])[0]
+        offset += 4
+        encryptedGroupSecrets = data[offset:offset + secretsLen]
+        offset += secretsLen
 
-            # Correctly calculate numLeaves based on publicRatchetTree size
-            publicRatchetTreeData = parsed["publicRatchetTree"]
-            totalNodes = len(publicRatchetTreeData)
-            numLeaves = (totalNodes + 1) // 2  # For a complete binary tree, leaves = (nodes + 1) / 2
+        epochSecretLen = struct.unpack("!I", data[offset:offset + 4])[0]
+        offset += 4
+        encryptedEpochSecret = data[offset:offset + epochSecretLen]
+        offset += epochSecretLen
 
-            # Initialize a valid hashManager
-            hashManager = TranscriptHashManager()
+        publicTreeLen = struct.unpack("!I", data[offset:offset + 4])[0]
+        offset += 4
+        publicRatchetTree = [
+            data[offset + i:offset + i + 32]
+            for i in range(0, publicTreeLen, 32)
+        ]
+        offset += publicTreeLen
 
-            # Create a new RatchetTree and reconstruct it from publicRatchetTreeData
-            ratchetTree = RatchetTree(numLeaves=numLeaves, initialSecret=b"", hashManager=hashManager)
-            ratchetTree.tree = [
-                Node(publicKey=node["publicKey"]) if isinstance(node["publicKey"], bytes)
-                else Node(publicKey=bytes.fromhex(node["publicKey"])) for node in publicRatchetTreeData
-            ]
+        keyPackageBytes = data[offset:]
+        keyPackage = KeyPackage.deserialize(keyPackageBytes)
 
-            keySchedule = KeySchedule(initialSecret=b"")
-            keySchedule.currentEpochSecret = encryptedGroupSecrets
-
-            return WelcomeMessage(
-                groupContext=groupContext,
-                ratchetTree=ratchetTree,
-                keySchedule=keySchedule,
-                groupVersion=parsed.get("groupVersion"),
-                groupCipherSuite=parsed.get("groupCipherSuite"),
-                keyPackage=None  # Placeholder: Adjust if keyPackage needs to be reconstructed
-            )
-        except Exception as e:
-            print(f"Error deserializing WelcomeMessage: {e}")
-            raise
+        return {
+            "groupContext": groupContext,
+            "encryptedGroupSecrets": encryptedGroupSecrets,
+            "encryptedEpochSecret": encryptedEpochSecret,
+            "publicRatchetTree": publicRatchetTree,
+            "keyPackage": keyPackage,
+        }
 
 
