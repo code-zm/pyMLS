@@ -1,12 +1,11 @@
 import os
 import struct
 from typing import Dict, Any
-from cryptography.hazmat.primitives.serialization import PrivateFormat, NoEncryption, Encoding
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
 from .KeyPackage import KeyPackage
 
 
@@ -22,60 +21,60 @@ class WelcomeMessage:
         self.groupVersion = groupVersion
         self.groupCipherSuite = groupCipherSuite
 
-    def hpke_encrypt(self, recipient_public_key_bytes: bytes, plaintext: bytes, aad: bytes = b"") -> (bytes, bytes):
+    def hpkeEncrypt(self, recipientPublicKeyBytes: bytes, plaintext: bytes, aad: bytes = b"") -> (bytes, bytes):
         """
         Encrypt a plaintext using HPKE.
-        :param recipient_public_key_bytes: Recipient's public key in raw format.
+        :param recipientPublicKeyBytes: Recipient's public key in raw format.
         :param plaintext: The plaintext to encrypt.
         :param aad: Additional authenticated data.
-        :return: (ephemeral_public_key, ciphertext)
+        :return: (ephemeralPublicKey, ciphertext)
         """
         # Generate ephemeral key pair
-        ephemeral_private_key = X25519PrivateKey.generate()
-        ephemeral_public_key = ephemeral_private_key.public_key()
+        ephemeralPrivateKey = X25519PrivateKey.generate()
+        ephemeralPublicKey = ephemeralPrivateKey.public_key()
 
         # Load recipient's public key
-        recipient_public_key = X25519PublicKey.from_public_bytes(recipient_public_key_bytes)
+        recipientPublicKey = X25519PublicKey.from_public_bytes(recipientPublicKeyBytes)
 
         # Perform Diffie-Hellman key exchange
-        shared_secret = ephemeral_private_key.exchange(recipient_public_key)
+        sharedSecret = ephemeralPrivateKey.exchange(recipientPublicKey)
 
         # Derive key and nonce
         hkdf = HKDF(algorithm=SHA256(), length=32 + 12, salt=None, info=b"hpke-context")
-        key_and_nonce = hkdf.derive(shared_secret)
-        encryption_key = key_and_nonce[:32]
-        nonce = key_and_nonce[32:]
+        keyAndNonce = hkdf.derive(sharedSecret)
+        encryptionKey = keyAndNonce[:32]
+        nonce = keyAndNonce[32:]
 
         # Encrypt plaintext
-        aesgcm = AESGCM(encryption_key)
+        aesgcm = AESGCM(encryptionKey)
         ciphertext = aesgcm.encrypt(nonce, plaintext, aad)
 
         # Return ephemeral public key and ciphertext
-        return ephemeral_public_key.public_bytes(Encoding.Raw, PublicFormat.Raw), ciphertext
+        return ephemeralPublicKey.public_bytes(Encoding.Raw, PublicFormat.Raw), ciphertext
 
-    def hpke_decrypt(self, recipient_private_key: X25519PrivateKey, ephemeral_public_key_bytes: bytes, ciphertext: bytes, aad: bytes = b"") -> bytes:
+    def hpkeDecrypt(self, recipientPrivateKey: X25519PrivateKey, ephemeralPublicKeyBytes: bytes, ciphertext: bytes, aad: bytes = b"") -> bytes:
         """
         Decrypt a ciphertext using HPKE.
-        :param recipient_private_key: Recipient's private key object.
-        :param ephemeral_public_key_bytes: Ephemeral public key sent by the sender.
+        :param recipientPrivateKey: Recipient's private key object.
+        :param ephemeralPublicKeyBytes: Ephemeral public key sent by the sender.
         :param ciphertext: The ciphertext to decrypt.
         :param aad: Additional authenticated data.
         :return: The decrypted plaintext.
         """
         # Load ephemeral public key
-        ephemeral_public_key = X25519PublicKey.from_public_bytes(ephemeral_public_key_bytes)
+        ephemeralPublicKey = X25519PublicKey.from_public_bytes(ephemeralPublicKeyBytes)
 
         # Perform Diffie-Hellman key exchange
-        shared_secret = recipient_private_key.exchange(ephemeral_public_key)
+        sharedSecret = recipientPrivateKey.exchange(ephemeralPublicKey)
 
         # Derive key and nonce
         hkdf = HKDF(algorithm=SHA256(), length=32 + 12, salt=None, info=b"hpke-context")
-        key_and_nonce = hkdf.derive(shared_secret)
-        encryption_key = key_and_nonce[:32]
-        nonce = key_and_nonce[32:]
+        keyAndNonce = hkdf.derive(sharedSecret)
+        encryptionKey = keyAndNonce[:32]
+        nonce = keyAndNonce[32:]
 
         # Decrypt ciphertext
-        aesgcm = AESGCM(encryption_key)
+        aesgcm = AESGCM(encryptionKey)
         plaintext = aesgcm.decrypt(nonce, ciphertext, aad)
 
         return plaintext
@@ -96,8 +95,8 @@ class WelcomeMessage:
         groupSecret = os.urandom(32)
 
         # Encrypt groupSecret using HPKE
-        ephemeral_public_key, encryptedGroupSecrets = self.hpke_encrypt(
-            recipient_public_key_bytes=keyPackage.initKey,
+        ephemeralPublicKey, encryptedGroupSecrets = self.hpkeEncrypt(
+            recipientPublicKeyBytes=keyPackage.initKey,
             plaintext=groupSecret
         )
 
@@ -117,55 +116,12 @@ class WelcomeMessage:
 
         welcomeMessage = {
             "groupContext": self.groupContext,
-            "encryptedGroupSecrets": ephemeral_public_key + encryptedGroupSecrets,
+            "encryptedGroupSecrets": ephemeralPublicKey + encryptedGroupSecrets,
             "encryptedEpochSecret": nonce + encryptedEpochSecret,
             "publicRatchetTree": publicRatchetTree,
             "keyPackage": keyPackage.serialize(),
         }
         return welcomeMessage
-
-    def processWelcome(self, welcomeMessage: Dict[str, Any], privateKey: X25519PrivateKey):
-        """
-        Processes a Welcome message to initialize the new member's state.
-        """
-        encryptedGroupSecrets = welcomeMessage["encryptedGroupSecrets"]
-        ephemeral_public_key = encryptedGroupSecrets[:32]
-        ciphertext = encryptedGroupSecrets[32:]
-
-        # Decrypt groupSecret using HPKE
-        groupSecret = self.hpke_decrypt(
-            recipient_private_key=privateKey,
-            ephemeral_public_key_bytes=ephemeral_public_key,
-            ciphertext=ciphertext,
-        )
-
-        # Derive joinerSecret from groupSecret
-        joinerSecret = HKDF(
-            algorithm=SHA256(),
-            length=32,
-            salt=None,
-            info=b"mls-joiner-secret"
-        ).derive(groupSecret)
-
-        # Derive symmetric decryption key and nonce from joinerSecret
-        aesgcm = AESGCM(joinerSecret[:16])
-        nonce = joinerSecret[16:28]
-
-        # Decrypt epochSecret
-        encryptedEpochSecret = welcomeMessage["encryptedEpochSecret"]
-        extractedNonce = encryptedEpochSecret[:12]
-        ciphertext = encryptedEpochSecret[12:]
-
-        if extractedNonce != nonce:
-            raise ValueError("Nonce mismatch during decryption.")
-
-        epochSecret = aesgcm.decrypt(nonce, ciphertext, self.groupContext)
-
-        # Update the key schedule with the decrypted epochSecret
-        self.keySchedule.currentEpochSecret = epochSecret
-
-        # Sync the ratchet tree with the provided public state
-        self.ratchetTree.syncTree(welcomeMessage["publicRatchetTree"])
 
     def serializeBinary(self, welcomeMessage: Dict[str, Any]) -> bytes:
         """
@@ -231,4 +187,45 @@ class WelcomeMessage:
             "keyPackage": keyPackage,
         }
 
+    def processWelcome(self, welcomeMessage: Dict[str, Any], privateKey: X25519PrivateKey):
+        """
+        Processes a Welcome message to initialize the new member's state.
+        """
+        encryptedGroupSecrets = welcomeMessage["encryptedGroupSecrets"]
+        ephemeralPublicKey = encryptedGroupSecrets[:32]
+        ciphertext = encryptedGroupSecrets[32:]
 
+        # Decrypt groupSecret using HPKE
+        groupSecret = self.hpkeDecrypt(
+            recipientPrivateKey=privateKey,
+            ephemeralPublicKeyBytes=ephemeralPublicKey,
+            ciphertext=ciphertext,
+        )
+
+        # Derive joinerSecret from groupSecret
+        joinerSecret = HKDF(
+            algorithm=SHA256(),
+            length=32,
+            salt=None,
+            info=b"mls-joiner-secret"
+        ).derive(groupSecret)
+
+        # Derive symmetric decryption key and nonce from joinerSecret
+        aesgcm = AESGCM(joinerSecret[:16])
+        nonce = joinerSecret[16:28]
+
+        # Decrypt epochSecret
+        encryptedEpochSecret = welcomeMessage["encryptedEpochSecret"]
+        extractedNonce = encryptedEpochSecret[:12]
+        ciphertext = encryptedEpochSecret[12:]
+
+        if extractedNonce != nonce:
+            raise ValueError("Nonce mismatch during decryption.")
+
+        epochSecret = aesgcm.decrypt(nonce, ciphertext, self.groupContext)
+
+        # Update the key schedule with the decrypted epochSecret
+        self.keySchedule.currentEpochSecret = epochSecret
+
+        # Sync the ratchet tree with the provided public state
+        self.ratchetTree.syncTree(welcomeMessage["publicRatchetTree"])
