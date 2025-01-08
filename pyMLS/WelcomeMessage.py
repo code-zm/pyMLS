@@ -123,61 +123,32 @@ class WelcomeMessage:
         }
         return welcomeMessage
 
-    def serializeBinary(self, welcomeMessage: Dict[str, Any]) -> bytes:
+    def serialize(self, welcomeMessage: Dict[str, Any]) -> bytes:
         """
         Serialize the WelcomeMessage to binary format.
         """
-        groupContextLen = len(welcomeMessage["groupContext"])
-        secretsLen = len(welcomeMessage["encryptedGroupSecrets"])
-        epochSecretLen = len(welcomeMessage["encryptedEpochSecret"])
-        publicTreeBytes = b''.join(welcomeMessage["publicRatchetTree"])
-        keyPackageBytes = welcomeMessage["keyPackage"]
+        stream = serialize.io_wrapper()
+        stream.write(serialize.ser_str(welcomeMessage["groupContext"]))
+        stream.write(serialize.ser_str(welcomeMessage["encryptedGroupSecrets"]))
+        stream.write(serialize.ser_str(welcomeMessage["encryptedEpochSecret"]))
+        stream.write(serialize.ser_str_list(welcomeMessage["publicRatchetTree"]))
+        stream.write(serialize.ser_str(welcomeMessage["keyPackage"]))
+        return stream.getvalue()
 
-        return struct.pack(
-            f"!I{groupContextLen}sI{secretsLen}sI{epochSecretLen}sI{len(publicTreeBytes)}s{len(keyPackageBytes)}s",
-            groupContextLen,
-            welcomeMessage["groupContext"],
-            secretsLen,
-            welcomeMessage["encryptedGroupSecrets"],
-            epochSecretLen,
-            welcomeMessage["encryptedEpochSecret"],
-            len(publicTreeBytes),
-            publicTreeBytes,
-            keyPackageBytes,
-        )
 
     @staticmethod
-    def deserializeBinary(data: bytes) -> Dict[str, Any]:
+    def deserialize(data: bytes) -> Dict[str, Any]:
         """
         Deserialize binary data into a WelcomeMessage dictionary.
         """
-        offset = 0
-
-        groupContextLen = struct.unpack("!I", data[offset:offset + 4])[0]
-        offset += 4
-        groupContext = data[offset:offset + groupContextLen]
-        offset += groupContextLen
-
-        secretsLen = struct.unpack("!I", data[offset:offset + 4])[0]
-        offset += 4
-        encryptedGroupSecrets = data[offset:offset + secretsLen]
-        offset += secretsLen
-
-        epochSecretLen = struct.unpack("!I", data[offset:offset + 4])[0]
-        offset += 4
-        encryptedEpochSecret = data[offset:offset + epochSecretLen]
-        offset += epochSecretLen
-
-        publicTreeLen = struct.unpack("!I", data[offset:offset + 4])[0]
-        offset += 4
-        publicRatchetTree = [
-            data[offset + i:offset + i + 32]
-            for i in range(0, publicTreeLen, 32)
-        ]
-        offset += publicTreeLen
-
-        keyPackageBytes = data[offset:]
-        keyPackage = KeyPackage.deserialize(keyPackageBytes)
+        stream = serialize.io_wrapper(data)
+        groupContext = serialize.deser_str(stream)
+        encryptedGroupSecrets = serialize.deser_str(stream)
+        encryptedEpochSecret = serialize.deser_str(stream)
+        publicRatchetTree = serialize.deser_str_list(stream)
+        keyPackageBytes = serialize.deser_str(stream)
+        keyPackage = KeyPackage()
+        keyPackage.deserialize(keyPackageBytes)
 
         return {
             "groupContext": groupContext,
