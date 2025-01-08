@@ -23,9 +23,10 @@ class MockKeyPackage(KeyPackage):
                 "signatureKey": publicKey.hex(),
                 "leafNodeSource": "mock",
             },
-            extensions=[],
-            privateKey=privateKey,
+            extensions=[]
         )
+
+        self.privateKey = privateKey
 
     def validate(self, groupContext, groupCipherSuite):
         """Mock validation logic."""

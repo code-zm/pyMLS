@@ -21,26 +21,29 @@ class TestProposals(unittest.TestCase):
             leafNode={"leafNodeSource": "test_leaf_node"},
             extensions=[],
             credential="test_credential".encode("utf-8"),
-            signature=None
+            signature=bytes()
         )
 
     def test_add_proposal_serialization(self):
         proposal = AddProposal(self.key_package)
-        serialized = proposal.serializeBinary()
-        deserialized = AddProposal.deserializeBinary(serialized)
-        self.assertEqual(proposal.keyPackage.serialize(), deserialized.keyPackage.serialize())
+        serialized = proposal.serialize()
+        deserialized = AddProposal()
+        deserialized.deserialize(serialized)
+        self.assertEqual(proposal.keyPackage, deserialized.keyPackage)
 
     def test_remove_proposal_serialization(self):
         proposal = RemoveProposal(memberIndex=5)
-        serialized = proposal.serializeBinary()
-        deserialized = RemoveProposal.deserializeBinary(serialized)
+        serialized = proposal.serialize()
+        deserialized = RemoveProposal()
+        deserialized.deserialize(serialized)
         self.assertEqual(proposal.memberIndex, deserialized.memberIndex)
 
     def test_update_proposal_serialization(self):
         proposal = UpdateProposal(self.key_package)
-        serialized = proposal.serializeBinary()
-        deserialized = UpdateProposal.deserializeBinary(serialized)
-        self.assertEqual(proposal.keyPackage.serialize(), deserialized.keyPackage.serialize())
+        serialized = proposal.serialize()
+        deserialized = UpdateProposal()
+        deserialized.deserialize(serialized)
+        self.assertEqual(proposal.keyPackage, deserialized.keyPackage)
 
     def test_proposal_signing(self):
         proposal = AddProposal(self.key_package)
@@ -62,7 +65,7 @@ class TestProposals(unittest.TestCase):
         proposal_list = ProposalList(proposals, self.hash_manager)
         
         # Test serialization
-        serialized = proposal_list.serializeBinary()
+        serialized = proposal_list.serialize()
         self.assertIsInstance(serialized, bytes)
 
         # Test adding a proposal
@@ -74,6 +77,11 @@ class TestProposals(unittest.TestCase):
         signature = proposal_list.signList(self.private_key)
         is_verified = proposal_list.verifyList(signature, self.public_key)
         self.assertTrue(is_verified)
+
+
+    
+
+ 
 
 if __name__ == '__main__':
     unittest.main()

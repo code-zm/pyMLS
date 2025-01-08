@@ -8,54 +8,72 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.exceptions import InvalidTag
 from cryptography.exceptions import InvalidSignature
 from .KeySchedule import KeySchedule
+from . import serialize
 
 DEBUG = False
 
 class PublicMessage:
-    def __init__(self, content: bytes, signature: bytes, groupId: bytes, epoch: int):
+    def __init__(self, content: bytes = None, signature: bytes = None, groupId: bytes = None, epoch: int = None):
         self.content = content
         self.signature = signature
         self.groupId = groupId
         self.epoch = epoch
 
     def encode(self) -> bytes:
-        return self.groupId + self.epoch.to_bytes(4, 'big') + self.signature + self.content
+        stream = serialize.io_wrapper()
+        stream.write(serialize.ser_str(self.content))
+        stream.write(serialize.ser_str(self.signature))
+        stream.write(serialize.ser_str(self.groupId))
+        stream.write(serialize.ser_int(self.epoch))
+        return stream.getvalue()
 
-    @staticmethod
-    def decode(encodedMessage: bytes):
-        groupId = encodedMessage[:16]  # Assuming groupId is 16 bytes
-        epoch = int.from_bytes(encodedMessage[16:20], 'big')
-        signature = encodedMessage[20:84]  # Assuming Ed25519 signature is 64 bytes
-        content = encodedMessage[84:]
-        return PublicMessage(content, signature, groupId, epoch)
+    def decode(self, encodedMessage: bytes):
+        stream = serialize.io_wrapper(encodedMessage)
+        self.content = serialize.deser_str(stream)
+        self.signature = serialize.deser_str(stream)
+        self.groupId = serialize.deser_str(stream)
+        self.epoch = serialize.deser_int(stream)
+        return self
+
+    def __eq__(self, other):
+        return (self.content == other.content and 
+            self.signature == other.signature and
+            self.groupId == other.groupId and
+            self.epoch == other.epoch
+        )
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
 
 class PrivateMessage:
-    def __init__(self, senderData: bytes, ciphertext: bytes, authTag: bytes):
+    def __init__(self, senderData: bytes = None, ciphertext: bytes = None, authTag: bytes = None):
         self.senderData = senderData
         self.ciphertext = ciphertext
         self.authTag = authTag
 
     def encode(self) -> bytes:
-        senderDataLen = len(self.senderData).to_bytes(4, 'big')  # Add senderData length
-        ciphertextLen = len(self.ciphertext).to_bytes(4, 'big')   # Add ciphertext length
-        return senderDataLen + ciphertextLen + self.senderData + self.ciphertext + self.authTag
+        stream = serialize.io_wrapper()
+        stream.write(serialize.ser_str(self.senderData))
+        stream.write(serialize.ser_str(self.ciphertext))
+        stream.write(serialize.ser_str(self.authTag))
+        return stream.getvalue()
 
-    @staticmethod
-    def decode(encodedMessage: bytes):
-        senderDataLen = int.from_bytes(encodedMessage[:4], 'big')  # Extract senderData length
-        ciphertextLen = int.from_bytes(encodedMessage[4:8], 'big')  # Extract ciphertext length
+    def decode(self, encodedMessage: bytes):
+        stream = serialize.io_wrapper(encodedMessage)
+        self.senderData = serialize.deser_str(stream)
+        self.ciphertext = serialize.deser_str(stream)
+        self.authTag = serialize.deser_str(stream)
+        return self
 
-        senderDataStart = 8
-        senderDataEnd = senderDataStart + senderDataLen
-        ciphertextStart = senderDataEnd
-        ciphertextEnd = ciphertextStart + ciphertextLen
+    def __eq__(self, other):
+        return (self.senderData == other.senderData and 
+            self.ciphertext == other.ciphertext and
+            self.authTag == other.authTag
+        )
 
-        senderData = encodedMessage[senderDataStart:senderDataEnd]
-        ciphertext = encodedMessage[ciphertextStart:ciphertextEnd]
-        authTag = encodedMessage[ciphertextEnd:]  # Remaining is authTag
-
-        return PrivateMessage(senderData, ciphertext, authTag)
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
 
 class MessageFraming:
@@ -145,5 +163,6 @@ class MessageFraming:
         return PublicMessage(content, signature, groupId, self.epoch)
 
     def processPublicMessage(self, encodedMessage: bytes, publicKey: bytes) -> bool:
-        publicMessage = PublicMessage.decode(encodedMessage)
+        publicMessage = PublicMessage()
+        publicMessage.decode(encodedMessage)
         return self.verifySignature(publicMessage, publicKey)

@@ -1,5 +1,6 @@
 import struct
 from enum import Enum
+from . import serialize
 
 DEBUG = False
 
@@ -10,7 +11,7 @@ class HandshakeType(Enum):
     COMMIT = 4
 
 class HandshakeMessage:
-    def __init__(self, messageType: HandshakeType, payload: bytes):
+    def __init__(self, messageType: HandshakeType = None, payload: bytes = None):
         """
         Initialize a HandshakeMessage.
         
@@ -20,31 +21,36 @@ class HandshakeMessage:
         self.messageType = messageType
         self.payload = payload
 
-    def serializeBinary(self) -> bytes:
+    def serialize(self) -> bytes:
         """
         Serialize the HandshakeMessage to binary format.
 
         :return: Binary serialization of the handshake message.
         """
-        payloadLength = len(self.payload)
-        return struct.pack(f"!B{payloadLength}s", self.messageType.value, self.payload)
+        stream = serialize.io_wrapper()
+        stream.write(serialize.ser_int(self.messageType.value))
+        stream.write(serialize.ser_str(self.payload))
+        return stream.getvalue()
 
-    @staticmethod
-    def deserializeBinary(data: bytes) -> "HandshakeMessage":
+    def deserialize(self, data: bytes) -> "HandshakeMessage":
         """
         Deserialize binary data into a HandshakeMessage.
 
         :param data: Binary data to deserialize.
         :return: A HandshakeMessage instance.
         """
-        try:
-            if DEBUG:
-                print(f"Raw data for HandshakeMessage deserialization: {data}")
-            messageTypeValue = struct.unpack("!B", data[:1])[0]
-            messageType = HandshakeType(messageTypeValue)
-            payload = data[1:]
-            return HandshakeMessage(messageType, payload)
-        except Exception as e:
-            if DEBUG:
-                print(f"Error during HandshakeMessage deserialization: {e}")
-            raise
+
+        if DEBUG:
+            print(f"Raw data for HandshakeMessage deserialization: {data}")
+
+        stream = serialize.io_wrapper(data)
+        messageTypeValue = serialize.deser_int(stream)
+        self.messageType = HandshakeType(messageTypeValue)
+        self.payload = serialize.deser_str(stream)
+        return self
+
+    def __eq__(self, other):
+        return (self.messageType == other.messageType and self.payload == other.payload)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)

@@ -67,11 +67,10 @@ class TestMessageFraming(unittest.TestCase):
         signature = self.mf.signMessage(content, self.group_id)
         public_message = PublicMessage(content, signature, self.group_id, self.epoch)
         encoded_message = public_message.encode()
-        decoded_message = PublicMessage.decode(encoded_message)
-        self.assertEqual(public_message.content, decoded_message.content)
-        self.assertEqual(public_message.signature, decoded_message.signature)
-        self.assertEqual(public_message.groupId, decoded_message.groupId)
-        self.assertEqual(public_message.epoch, decoded_message.epoch)
+        decoded_message = PublicMessage()
+        decoded_message.decode(encoded_message)
+        self.assertEqual(public_message, decoded_message)
+       
 
     def testPrivateMessageEncodingDecoding(self):
         sender_data = b"Sender data"
@@ -80,11 +79,11 @@ class TestMessageFraming(unittest.TestCase):
 
         private_message = PrivateMessage(sender_data, ciphertext, auth_tag)
         encoded_message = private_message.encode()
-        decoded_message = PrivateMessage.decode(encoded_message)
+        decoded_message = PrivateMessage()
+        decoded_message.decode(encoded_message)
 
-        self.assertEqual(private_message.senderData, decoded_message.senderData)
-        self.assertEqual(private_message.ciphertext, decoded_message.ciphertext)
-        self.assertEqual(private_message.authTag, decoded_message.authTag)
+        self.assertEqual(private_message, decoded_message)
+
 
 
 if __name__ == "__main__":

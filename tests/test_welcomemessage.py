@@ -67,15 +67,15 @@ class TestWelcomeMessage(unittest.TestCase):
     def testSerializeBinary(self):
         """Test binary serialization of a WelcomeMessage."""
         welcomeMessage = self.welcomeMessageHandler.createWelcome(self.keyPackage)
-        serialized = self.welcomeMessageHandler.serializeBinary(welcomeMessage)
+        serialized = self.welcomeMessageHandler.serialize(welcomeMessage)
         self.assertIsInstance(serialized, bytes)
         self.assertGreater(len(serialized), 0)
 
     def testDeserializeBinary(self):
         """Test binary deserialization of a WelcomeMessage."""
         welcomeMessage = self.welcomeMessageHandler.createWelcome(self.keyPackage)
-        serialized = self.welcomeMessageHandler.serializeBinary(welcomeMessage)
-        deserialized = self.welcomeMessageHandler.deserializeBinary(serialized)
+        serialized = self.welcomeMessageHandler.serialize(welcomeMessage)
+        deserialized = self.welcomeMessageHandler.deserialize(serialized)
         self.assertIn("groupContext", deserialized)
         self.assertIn("encryptedGroupSecrets", deserialized)
         self.assertIn("encryptedEpochSecret", deserialized)
@@ -85,8 +85,8 @@ class TestWelcomeMessage(unittest.TestCase):
     def testProcessWelcomeMessage(self):
         """Test processing a WelcomeMessage to initialize state."""
         welcomeMessage = self.welcomeMessageHandler.createWelcome(self.keyPackage)
-        serialized = self.welcomeMessageHandler.serializeBinary(welcomeMessage)
-        deserialized = self.welcomeMessageHandler.deserializeBinary(serialized)
+        serialized = self.welcomeMessageHandler.serialize(welcomeMessage)
+        deserialized = self.welcomeMessageHandler.deserialize(serialized)
 
         # Mock syncTree
         self.mockRatchetTree.syncTree = lambda x: None

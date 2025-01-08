@@ -58,11 +58,11 @@ class TestTranscriptHashManager(unittest.TestCase):
         """
         serializedState = self.hashManager.serializeState(self.sampleState1)
         self.assertIsInstance(serializedState, bytes)
-        self.assertEqual(serializedState, b'{"group_id":1,"epoch":1}')
+        self.assertEqual(serializedState, b'\x02\x08group_id\x01\x00\x00\x00\x05epoch\x01\x00\x00\x00')
 
         # Test with another state
         serializedState2 = self.hashManager.serializeState(self.sampleState2)
-        self.assertEqual(serializedState2, b'{"group_id":1,"epoch":2}')
+        self.assertEqual(serializedState2, b'\x02\x08group_id\x01\x00\x00\x00\x05epoch\x02\x00\x00\x00')
 
 
 if __name__ == "__main__":
