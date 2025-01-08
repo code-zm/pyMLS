@@ -74,7 +74,7 @@ class TestWelcomeMessage(unittest.TestCase):
     def testDeserializeBinary(self):
         """Test binary deserialization of a WelcomeMessage."""
         welcomeMessage = self.welcomeMessageHandler.createWelcome(self.keyPackage)
-        serialized = self.welcomeMessageHandler.serializeBinary(welcomeMessage)
+        serialized = self.welcomeMessageHandler.serialize(welcomeMessage)
         deserialized = self.welcomeMessageHandler.deserializeBinary(serialized)
         self.assertIn("groupContext", deserialized)
         self.assertIn("encryptedGroupSecrets", deserialized)

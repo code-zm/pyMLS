@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import serialization
 from .KeySchedule import KeySchedule
 from .TranscriptHashManager import TranscriptHashManager
 from .KeyPackage import KeyPackage
+from . import serialize
 
 DEBUG = False
 
@@ -210,13 +211,17 @@ class RatchetTree:
 
     def serializeTree(self) -> bytes:
         """Serializes the tree's public keys."""
-        return b''.join(node.publicKey or b'' for node in self.tree)
+        pubkeys = [node.publicKey or b'' for node in self.tree]
+        stream = serialize.io_wrapper()
+        stream.write(serialize.ser_str_list(pubkeys))
+        return stream.getvalue()
 
     def deserializeTree(self, serialized: bytes):
         """Deserializes the tree's public keys."""
+        stream = serialize.io_wrapper(serialized)
+        pubkeys = serialize.deser_str_list(stream)
         for i, node in enumerate(self.tree):
-            start = i * 32
-            node.publicKey = serialized[start:start + 32] if start < len(serialized) else None
+            node.publicKey = pubkeys[i]
 
     def getPublicState(self) -> List[Optional[bytes]]:
         """Returns the public state of the tree."""
