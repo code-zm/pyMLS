@@ -38,12 +38,13 @@ class TestCommit(unittest.TestCase):
         self.transcriptHashManager = MockTranscriptHashManager()
 
     def testCommitSerialization(self):
-        serialized = self.commit.serializeBinary()
+        serialized = self.commit.serialize()
         self.assertTrue(serialized, "Commit serialization should produce a non-empty result.")
 
     def testCommitDeserialization(self):
-        serialized = self.commit.serializeBinary()
-        deserialized = Commit.deserializeBinary(serialized)
+        serialized = self.commit.serialize()
+        deserialized = Commit()
+        deserialized.deserialize(serialized)
         self.assertEqual(len(deserialized.proposals), len(self.proposals))
         self.assertEqual(deserialized.commitSecret, self.commitSecret)
         self.assertEqual(deserialized.groupContext, self.groupContext)
