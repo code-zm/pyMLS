@@ -58,7 +58,9 @@ class KeyPackage:
         self.extensions = serialize.deser_str_list(stream)
         if not(nType & serialize.SerType.SER_TBS):
             self.signature = serialize.deser_str(stream)
-        self.leafNode = {"leafNodeSource": leafNodeSource.decode(), "signatureKey": signatureKey}
+        self.leafNode = {"leafNodeSource": leafNodeSource.decode()}
+        if signatureKey:
+            self.leafNode["signatureKey"] = signatureKey
         return self
 
 

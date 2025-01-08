@@ -1,4 +1,5 @@
 from cryptography.hazmat.primitives.hashes import Hash, SHA256
+from . import serialize
 import json
 
 DEBUG = False
@@ -78,7 +79,7 @@ class TranscriptHashManager:
         :return: A JSON-formatted byte string.
         """
         try:
-            serialized = json.dumps(state, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            serialized = serialize.ser_str_dict(state)
             if DEBUG:
                 print(f"Serialized state: {serialized}")
             return serialized

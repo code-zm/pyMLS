@@ -85,11 +85,58 @@ def deser_list(f, cls, arg1=None):
         r.append(t)
     return r
 
+
+def ser_dict(d, key_ser_func=None, value_ser_func=None):
+    r = b""
+    dict_size = len(d)
+    if dict_size < 253:
+        r = bytes([dict_size])
+    elif dict_size < 2**16:
+        r = bytes([253]) + struct.pack("<H", dict_size)
+    elif dict_size < 2**32:
+        r = bytes([254]) + struct.pack("<I", dict_size)
+    else:
+        r = bytes([255]) + struct.pack("<Q", dict_size)
+    for k, v in d.items():
+        r += key_ser_func(k) if key_ser_func else k.serialize()
+        r += value_ser_func(v) if value_ser_func else v.serialize()
+    return r
+
+
+def deser_dict(f, key_cls, value_cls, arg1=None, arg2=None):
+    nit = struct.unpack("<B", f.read(1))[0]
+    if nit == 253:
+        nit = struct.unpack("<H", f.read(2))[0]
+    elif nit == 254:
+        nit = struct.unpack("<I", f.read(4))[0]
+    elif nit == 255:
+        nit = struct.unpack("<Q", f.read(8))[0]
+    r = {}
+    for _ in range(nit):
+        if isinstance(key_cls, types.FunctionType):
+            k = key_cls(f)
+        else:
+            k = key_cls(arg1) if arg1 is not None else key_cls()
+            k.deserialize(f)
+        if isinstance(value_cls, types.FunctionType):
+            v = value_cls(f)
+        else:
+            v = value_cls(arg2) if arg2 is not None else value_cls()
+            v.deserialize(f)
+        r[k] = v
+    return r
+
+
+
+# STR KEY, INT VALUE
+def ser_str_dict(d):
+    return ser_dict(d, ser_str, ser_int)
+
 # INT 
 def ser_int(i):
     return struct.pack(b"<i", i)
 
-def deser_int(f):
+def deser_int(f, skip=-1):
     return struct.unpack(b"<i", f.read(4))[0]
 
 # UINT 

@@ -26,48 +26,49 @@ class TestHandshakeMessages(unittest.TestCase):
             },
             extensions=extensions,
             credential=credential,
-            signature=None,
+            signature=bytes(),
         )
 
 
     def test_handshake_serialize_deserialize(self):
         # Test for ADD
         add_msg = HandshakeMessage(HandshakeType.ADD, b"payload_add")
-        serialized = add_msg.serializeBinary()
-        deserialized = HandshakeMessage.deserializeBinary(serialized)
-        self.assertEqual(add_msg.messageType, deserialized.messageType)
-        self.assertEqual(add_msg.payload, deserialized.payload)
+        serialized = add_msg.serialize()
+        deserialized = HandshakeMessage()
+        deserialized.deserialize(serialized)
+        self.assertEqual(add_msg, deserialized)
 
         # Test for UPDATE
         update_msg = HandshakeMessage(HandshakeType.UPDATE, b"payload_update")
-        serialized = update_msg.serializeBinary()
-        deserialized = HandshakeMessage.deserializeBinary(serialized)
-        self.assertEqual(update_msg.messageType, deserialized.messageType)
-        self.assertEqual(update_msg.payload, deserialized.payload)
+        serialized = update_msg.serialize()
+        deserialized = HandshakeMessage()
+        deserialized.deserialize(serialized)
+        self.assertEqual(update_msg, deserialized)
 
         # Test for REMOVE
         remove_msg = HandshakeMessage(HandshakeType.REMOVE, b"payload_remove")
-        serialized = remove_msg.serializeBinary()
-        deserialized = HandshakeMessage.deserializeBinary(serialized)
-        self.assertEqual(remove_msg.messageType, deserialized.messageType)
-        self.assertEqual(remove_msg.payload, deserialized.payload)
+        serialized = remove_msg.serialize()
+        deserialized = HandshakeMessage()
+        deserialized.deserialize(serialized)
+        self.assertEqual(remove_msg, deserialized)
 
     def test_signature_validation(self):
         # Create and sign a message
         msg = HandshakeMessage(HandshakeType.COMMIT, b"commit_payload")
-        signature = self.private_key.sign(msg.serializeBinary())
+        signature = self.private_key.sign(msg.serialize())
         
         # Validate signature
-        self.public_key.verify(signature, msg.serializeBinary())
+        self.public_key.verify(signature, msg.serialize())
 
         # Test invalid signature
         with self.assertRaises(Exception):
-            self.public_key.verify(b"invalid_signature", msg.serializeBinary())
+            self.public_key.verify(b"invalid_signature", msg.serialize())
 
     def test_invalid_deserialization(self):
         # Test malformed input
         with self.assertRaises(Exception):
-            HandshakeMessage.deserializeBinary(b"malformed_input")
+            deserialized = HandshakeMessage()
+            deserialized.deserialize(b"malformed_input")
 
 if __name__ == "__main__":
     unittest.main()
